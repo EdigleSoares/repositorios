@@ -1,29 +1,45 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Check, ChevronDown, Info, X } from 'lucide-react-native';
 import {
+  Alert,
   Modal,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
 
 import { theme } from '@/constants/theme';
-
-const banks = [
-  { name: 'Nubank', monogram: 'nu', color: '#8A05BE' },
-  { name: 'Itaú', monogram: 'itaú', color: '#EC7000' },
-  { name: 'Bradesco', monogram: 'b', color: '#CC092F' },
-  { name: 'Banco do Brasil', monogram: 'bb', color: '#F8D117', textColor: '#173D80' },
-  { name: 'Mercado Pago', monogram: 'mp', color: '#009EE3' },
-  { name: 'Caixa', monogram: 'cx', color: '#0066B3' },
-  { name: 'Inter', monogram: 'in', color: '#FF7A00' },
-  { name: 'PagBank', monogram: 'p', color: '#13A867' },
-];
+import { banks } from '@/constants/banks';
+import { getSelectedBankId, saveSelectedBankId } from '@/services/bankSelection';
 
 export function BankSelector() {
-  const [selectedBank, setSelectedBank] = useState(banks[0]);
+  const [selectedBank, setSelectedBank] = useState(banks[1]);
   const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    void getSelectedBankId()
+      .then((selectedId) => {
+        if (mounted) {
+          const bank = banks.find((option) => option.id === selectedId);
+          if (bank) setSelectedBank(bank);
+        }
+      })
+      .catch((error: unknown) => {
+        if (mounted) {
+          Alert.alert(
+            'Não foi possível carregar o banco',
+            error instanceof Error ? error.message : 'Tente selecionar o banco novamente.',
+          );
+        }
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   return (
     <>
@@ -79,32 +95,46 @@ export function BankSelector() {
               </Pressable>
             </View>
 
-            {banks.map((bank) => {
-              const selected = bank.name === selectedBank.name;
-              return (
-                <Pressable
-                  key={bank.name}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected }}
-                  onPress={() => {
-                    setSelectedBank(bank);
-                    setOpen(false);
-                  }}
-                  style={({ pressed }) => [
-                    styles.bankOption,
-                    selected && styles.bankOptionSelected,
-                    pressed && styles.pressed,
-                  ]}>
-                  <View style={[styles.bankMark, { backgroundColor: bank.color }]}>
-                    <Text style={[styles.bankMonogram, bank.textColor && { color: bank.textColor }]}>
-                      {bank.monogram}
-                    </Text>
-                  </View>
-                  <Text style={styles.optionName}>{bank.name}</Text>
-                  {selected && <Check color={theme.colors.neon} size={18} />}
-                </Pressable>
-              );
-            })}
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              style={styles.bankOptions}
+              contentContainerStyle={styles.bankOptionsContent}>
+              {banks.map((bank) => {
+                const selected = bank.name === selectedBank.name;
+                return (
+                  <Pressable
+                    key={bank.name}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    onPress={() => {
+                      void saveSelectedBankId(bank.id)
+                        .then(() => {
+                          setSelectedBank(bank);
+                          setOpen(false);
+                        })
+                        .catch((error: unknown) => {
+                          Alert.alert(
+                            'Não foi possível salvar o banco',
+                            error instanceof Error ? error.message : 'Tente novamente.',
+                          );
+                        });
+                    }}
+                    style={({ pressed }) => [
+                      styles.bankOption,
+                      selected && styles.bankOptionSelected,
+                      pressed && styles.pressed,
+                    ]}>
+                    <View style={[styles.bankMark, { backgroundColor: bank.color }]}>
+                      <Text style={[styles.bankMonogram, bank.textColor && { color: bank.textColor }]}>
+                        {bank.monogram}
+                      </Text>
+                    </View>
+                    <Text style={styles.optionName}>{bank.name}</Text>
+                    {selected && <Check color={theme.colors.neon} size={18} />}
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -191,12 +221,15 @@ const styles = StyleSheet.create({
   sheet: {
     padding: 22,
     paddingBottom: 34,
+    maxHeight: '88%',
     borderTopLeftRadius: 26,
     borderTopRightRadius: 26,
     backgroundColor: theme.colors.surface,
     borderWidth: 1,
     borderColor: theme.colors.border,
   },
+  bankOptions: { flexShrink: 1 },
+  bankOptionsContent: { paddingBottom: 4 },
   sheetHeading: {
     flexDirection: 'row',
     justifyContent: 'space-between',

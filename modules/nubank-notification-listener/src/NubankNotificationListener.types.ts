@@ -19,4 +19,8 @@ export type BankNotificationListenerEvents = {
 export declare class NubankNotificationListenerModule extends NativeModule<BankNotificationListenerEvents> {
   isNotificationPermissionGranted(): boolean;
   openNotificationListenerSettings(): void;
+  isIgnoringBatteryOptimizations(): boolean;
+  requestIgnoreBatteryOptimizations(): void;
+  startForegroundTracking(): void;
+  stopForegroundTracking(): void;
 }

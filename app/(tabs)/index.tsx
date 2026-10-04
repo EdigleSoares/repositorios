@@ -4,13 +4,16 @@ import { Alert, AppState, Platform, ScrollView, StyleSheet, Text, View } from 'r
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BankSelector } from '@/components/BankSelector';
+import { BatteryOptimizationModal } from '@/components/BatteryOptimizationModal';
 import { NotificationPermissionModal } from '@/components/NotificationPermissionModal';
 import { StatusToggle } from '@/components/StatusToggle';
 import { theme } from '@/constants/theme';
 import {
   hasNotificationAccess,
+  hasBatteryOptimizationExemption,
   NotificationListenerUnavailableError,
   openNotificationAccessSettings,
+  requestBatteryOptimizationExemption,
   subscribeToBankPix,
 } from '@/services/bankNotificationListener';
 
@@ -20,21 +23,47 @@ export default function HomeScreen() {
   const [notificationListenerAvailable, setNotificationListenerAvailable] = useState(true);
   const [permissionChecked, setPermissionChecked] = useState(false);
   const [notificationError, setNotificationError] = useState<string>();
+  const [batteryOptimizationExempt, setBatteryOptimizationExempt] = useState(false);
+  const [batteryPermissionChecked, setBatteryPermissionChecked] = useState(false);
+  const [batteryPermissionError, setBatteryPermissionError] = useState<string>();
   const activeRef = useRef(active);
 
   const refreshNotificationAccess = useCallback(() => {
     void hasNotificationAccess()
-      .then((granted) => {
+      .then(async (granted) => {
         setNotificationListenerAvailable(true);
         setNotificationAccessGranted(granted);
         setPermissionChecked(true);
         setNotificationError(undefined);
+        if (!granted) {
+          setBatteryOptimizationExempt(false);
+          setBatteryPermissionChecked(false);
+          setBatteryPermissionError(undefined);
+          return;
+        }
+
+        setBatteryPermissionError(undefined);
+        try {
+          const exempt = await hasBatteryOptimizationExemption();
+          setBatteryOptimizationExempt(exempt);
+          setBatteryPermissionChecked(true);
+        } catch (error) {
+          setBatteryOptimizationExempt(false);
+          setBatteryPermissionChecked(true);
+          setBatteryPermissionError(
+            error instanceof Error
+              ? error.message
+              : 'Não foi possível verificar as restrições de bateria.',
+          );
+        }
       })
       .catch((error: unknown) => {
         if (error instanceof NotificationListenerUnavailableError) {
           setNotificationListenerAvailable(false);
           setNotificationAccessGranted(false);
+          setBatteryOptimizationExempt(false);
           setPermissionChecked(true);
+          setBatteryPermissionChecked(false);
           setNotificationError(undefined);
         } else {
           setPermissionChecked(true);
@@ -59,7 +88,9 @@ export default function HomeScreen() {
       Platform.OS !== 'android' ||
       !active ||
       !notificationListenerAvailable ||
-      !notificationAccessGranted
+      !notificationAccessGranted ||
+      !batteryPermissionChecked ||
+      !batteryOptimizationExempt
     ) {
       return;
     }
@@ -98,7 +129,13 @@ export default function HomeScreen() {
       cancelled = true;
       notificationSubscription?.remove();
     };
-  }, [active, notificationAccessGranted, notificationListenerAvailable]);
+  }, [
+    active,
+    batteryOptimizationExempt,
+    batteryPermissionChecked,
+    notificationAccessGranted,
+    notificationListenerAvailable,
+  ]);
 
   const toggleStatus = () => {
     const next = !activeRef.current;
@@ -117,6 +154,20 @@ export default function HomeScreen() {
         error instanceof Error ? error.message : 'Não foi possível abrir as configurações do Android.';
       setNotificationError(message);
       Alert.alert('Configurações indisponíveis', message);
+    }
+  };
+
+  const handleBatteryOptimization = async () => {
+    if (!notificationListenerAvailable) return;
+
+    try {
+      setBatteryPermissionError(undefined);
+      await requestBatteryOptimizationExemption();
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Não foi possível abrir as configurações de bateria.';
+      setBatteryPermissionError(message);
+      Alert.alert('Configuração de bateria indisponível', message);
     }
   };
 
@@ -155,14 +206,26 @@ export default function HomeScreen() {
 
         <Text style={styles.sectionTitle}>Banco para Pix</Text>
         <BankSelector />
+        <View style={styles.licenseStatus}>
+          <Check color={theme.colors.neon} size={15} strokeWidth={2.6} />
+          <Text style={styles.licenseStatusText}>Status da Licença: Ativa ✓</Text>
+        </View>
       </ScrollView>
       {Platform.OS === 'android' && (
-        <NotificationPermissionModal
-          visible={permissionChecked && !notificationAccessGranted}
-          available={notificationListenerAvailable}
-          error={notificationError}
-          onPress={handleNotificationAccess}
-        />
+        <>
+          <NotificationPermissionModal
+            visible={permissionChecked && !notificationAccessGranted}
+            available={notificationListenerAvailable}
+            error={notificationError}
+            onPress={handleNotificationAccess}
+          />
+          <BatteryOptimizationModal
+            visible={permissionChecked && notificationAccessGranted && batteryPermissionChecked && !batteryOptimizationExempt}
+            available={notificationListenerAvailable}
+            error={batteryPermissionError}
+            onPress={handleBatteryOptimization}
+          />
+        </>
       )}
     </SafeAreaView>
   );
@@ -258,5 +321,22 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginTop: 26,
     marginBottom: 12,
+  },
+  licenseStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    marginTop: 22,
+    paddingVertical: 11,
+    borderRadius: 14,
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  licenseStatusText: {
+    color: theme.colors.secondary,
+    fontSize: 11,
+    fontWeight: '600',
   },
 });
