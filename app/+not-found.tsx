@@ -1,40 +1,35 @@
-import { Link, Stack } from 'expo-router';
-import { StyleSheet } from 'react-native';
+import { Link } from 'expo-router';
+import { StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { Text, View } from '@/components/Themed';
+import { theme } from '@/constants/theme';
 
 export default function NotFoundScreen() {
   return (
-    <>
-      <Stack.Screen options={{ title: 'Oops!' }} />
-      <View style={styles.container}>
-        <Text style={styles.title}>This screen doesn't exist.</Text>
-
+    <SafeAreaView style={styles.safeArea}>
+      <View style={styles.content}>
+        <Text style={styles.code}>404</Text>
+        <Text style={styles.title}>Essa tela não existe.</Text>
+        <Text style={styles.description}>Volte ao início para continuar usando o PixFala.</Text>
         <Link href="/" style={styles.link}>
-          <Text style={styles.linkText}>Go to home screen!</Text>
+          Voltar ao início
         </Link>
       </View>
-    </>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 20,
-  },
-  title: {
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
+  safeArea: { flex: 1, backgroundColor: theme.colors.background },
+  content: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 28 },
+  code: { color: theme.colors.neon, fontSize: 48, fontWeight: '800', letterSpacing: -2 },
+  title: { color: theme.colors.text, fontSize: 20, fontWeight: '700', marginTop: 10 },
+  description: { color: theme.colors.secondary, fontSize: 13, textAlign: 'center', marginTop: 8 },
   link: {
-    marginTop: 15,
-    paddingVertical: 15,
-  },
-  linkText: {
-    fontSize: 14,
-    color: '#2e78b7',
+    color: theme.colors.neon,
+    fontSize: 13,
+    fontWeight: '700',
+    marginTop: 22,
+    padding: 12,
   },
 });
