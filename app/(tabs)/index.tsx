@@ -4,6 +4,7 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BankSelector } from '@/components/BankSelector';
+import { PixSimulator } from '@/components/PixSimulator';
 import { StatusToggle } from '@/components/StatusToggle';
 import { theme } from '@/constants/theme';
 
@@ -42,6 +43,12 @@ export default function HomeScreen() {
         </View>
 
         <StatusToggle active={active} onToggle={() => setActive((value) => !value)} />
+
+        <View style={styles.sectionHeading}>
+          <Text style={styles.sectionTitle}>Teste rápido</Text>
+          <Text style={styles.stepLabel}>SIMULAÇÃO</Text>
+        </View>
+        <PixSimulator active={active} />
 
         <View style={styles.sectionHeading}>
           <Text style={styles.sectionTitle}>Sua configuração</Text>
