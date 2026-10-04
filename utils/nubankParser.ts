@@ -1,17 +1,21 @@
 import type { NubankNotificationData } from '@/modules/nubank-notification-listener/src/NubankNotificationListener.types';
 
-import { formatarNomePagador, formatarValorMonetario } from '@/utils/pixFormatter';
+import {
+  extrairValorMonetario,
+  formatarNomePagador,
+  formatarValorMonetario,
+} from '@/utils/pixFormatter';
 
 export const NUBANK_PACKAGE = 'com.nu.production';
 
 const RECEIPT_PATTERNS = [
-  /você\s+recebeu\s+uma\s+transferência\s+de\s+((?:R\$\s*)?(?:\d{1,3}(?:\.\d{3})+|\d+)(?:,\d{1,2})?)\s+de\s+([\p{L}\p{M}][\p{L}\p{M} .'’-]{0,59})[.!?]*$/iu,
-  /\bpix\s+recebido\s*:?\s*((?:R\$\s*)?(?:\d{1,3}(?:\.\d{3})+|\d+)(?:,\d{1,2})?)\s+de\s+([\p{L}\p{M}][\p{L}\p{M} .'’-]{0,59})[.!?]*$/iu,
+  /(?:recebemos\s+sua?\s+transferência|você\s+recebeu\s+(?:uma\s+)?transferência|transferência\s+recebida)\s*(?:de\s*)?((?:R\$\s*)?(?:\d{1,3}(?:\.\d{3})+|\d+)(?:[,.]\d{1,2})?)(?:\s+de\s+([\p{L}\p{M}][\p{L}\p{M} .'’-]{0,59}))?[.!?]*$/iu,
+  /\bpix\s+recebido\s*:?\s*((?:R\$\s*)?(?:\d{1,3}(?:\.\d{3})+|\d+)(?:[,.]\d{1,2})?)(?:\s+de\s+([\p{L}\p{M}][\p{L}\p{M} .'’-]{0,59}))?[.!?]*$/iu,
 ];
 
 export type NubankPixReceipt = {
-  amount: string;
-  payer: string;
+  amount: string | null;
+  payer: string | null;
 };
 
 export function parseNubankNotification(
@@ -40,10 +44,14 @@ export function parseNubankNotification(
       if (!match) continue;
 
       const amount = formatarValorMonetario(match[1]);
-      const payer = formatarNomePagador(match[2].replace(/[.!?]+\s*$/u, ''));
-      if (amount && payer) return { amount, payer };
+      const payer = match[2] ? formatarNomePagador(match[2].replace(/[.!?]+\s*$/u, '')) : null;
+      if (amount) return { amount, payer };
     }
   }
 
-  return null;
+  const allContent = candidates.join(' ');
+  if (!/\b(?:transferência|pix)\b/iu.test(allContent)) return null;
+
+  const amount = candidates.map(extrairValorMonetario).find((value) => value !== null) ?? null;
+  return { amount, payer: null };
 }

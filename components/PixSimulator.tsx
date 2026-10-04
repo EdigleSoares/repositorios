@@ -23,37 +23,42 @@ export function PixSimulator({ active }: PixSimulatorProps) {
   const [simulations, setSimulations] = useState<PixSimulation[]>([]);
   const [feedback, setFeedback] = useState<{ type: 'error' | 'success'; message: string } | null>(null);
 
-  const simulatePix = () => {
+  const simulatePix = (withoutPayer = false) => {
     if (!active) {
       setFeedback({ type: 'error', message: 'Ative o PixFala antes de simular um recebimento.' });
       return;
     }
 
-    const formattedAmount = formatarValorMonetario(amount);
+    const formattedAmount = withoutPayer ? '0,01' : formatarValorMonetario(amount);
     if (!formattedAmount) {
       setFeedback({ type: 'error', message: 'Digite um valor válido, como 25,00.' });
       return;
     }
 
-    const formattedPayer = formatarNomePagador(payer);
-    if (!formattedPayer) {
+    const formattedPayer = withoutPayer ? null : formatarNomePagador(payer);
+    if (!withoutPayer && !formattedPayer) {
       setFeedback({ type: 'error', message: 'Digite o nome de quem enviou o Pix.' });
       return;
     }
 
-    const speech = falarPix(formattedAmount, formattedPayer);
+    const speech = falarPix(formattedAmount, formattedPayer ?? undefined);
     setSimulations((current) =>
       [
         {
           id: Date.now(),
           amount: formattedAmount,
-          payer: formattedPayer,
+          payer: formattedPayer ?? 'Remetente não informado',
           time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
         },
         ...current,
       ].slice(0, 5),
     );
-    setFeedback({ type: 'success', message: 'Pix de teste registrado. Anúncio de voz iniciado.' });
+    setFeedback({
+      type: 'success',
+      message: withoutPayer
+        ? 'Notificação sem nome simulada. Anúncio de voz iniciado.'
+        : 'Pix de teste registrado. Anúncio de voz iniciado.',
+    });
 
     void speech.catch((error: unknown) => {
       setFeedback({
@@ -114,7 +119,7 @@ export function PixSimulator({ active }: PixSimulatorProps) {
         accessibilityRole="button"
         accessibilityState={{ disabled: !active }}
         disabled={!active}
-        onPress={simulatePix}
+        onPress={() => simulatePix()}
         style={({ pressed }) => [
           styles.submitButton,
           !active && styles.submitButtonDisabled,
@@ -122,6 +127,21 @@ export function PixSimulator({ active }: PixSimulatorProps) {
         ]}>
         <Volume2 color={active ? theme.colors.black : theme.colors.muted} size={17} />
         <Text style={[styles.submitText, !active && styles.submitTextDisabled]}>Simular Recebimento</Text>
+      </Pressable>
+
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ disabled: !active }}
+        disabled={!active}
+        onPress={() => simulatePix(true)}
+        style={({ pressed }) => [
+          styles.noNameButton,
+          !active && styles.noNameButtonDisabled,
+          pressed && active && styles.pressed,
+        ]}>
+        <Text style={[styles.noNameButtonText, !active && styles.submitTextDisabled]}>
+          Simular notificação sem nome (R$ 0,01)
+        </Text>
       </Pressable>
 
       {!active && (
@@ -220,6 +240,19 @@ const styles = StyleSheet.create({
   submitButtonDisabled: { backgroundColor: '#292E35' },
   submitText: { color: theme.colors.black, fontSize: 12, fontWeight: '800' },
   submitTextDisabled: { color: theme.colors.muted },
+  noNameButton: {
+    minHeight: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+    marginTop: 8,
+    borderRadius: 13,
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  noNameButtonDisabled: { backgroundColor: theme.colors.surfaceRaised },
+  noNameButtonText: { color: theme.colors.secondary, fontSize: 10, fontWeight: '700', textAlign: 'center' },
   pressed: { opacity: 0.82, transform: [{ scale: 0.985 }] },
   disabledHint: { color: theme.colors.muted, fontSize: 10, textAlign: 'center', marginTop: 9 },
   feedback: {

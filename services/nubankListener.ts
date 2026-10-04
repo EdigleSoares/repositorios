@@ -59,6 +59,14 @@ export async function subscribeToNubankPix(
   const recentNotifications = new Map<string, number>();
 
   return nativeListener.addListener('onNotificationReceived', (notification: NubankNotificationData) => {
+    console.log('[PixFala] Notificação Nubank capturada:', {
+      title: notification.title,
+      text: notification.text,
+      bigText: notification.bigText,
+      subText: notification.subText,
+      summaryText: notification.summaryText,
+    });
+
     const receipt = parseNubankNotification(notification);
     if (!receipt || !isActive()) return;
 
@@ -82,7 +90,7 @@ export async function subscribeToNubankPix(
     }
 
     onReceipt(receipt);
-    void falarPix(receipt.amount, receipt.payer).catch((error: unknown) => {
+    void falarPix(receipt.amount ?? undefined, receipt.payer ?? undefined).catch((error: unknown) => {
       onError(error instanceof Error ? error : new Error('Não foi possível anunciar o Pix recebido.'));
     });
   });
