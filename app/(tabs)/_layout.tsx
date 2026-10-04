@@ -40,14 +40,14 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="report"
+        name="relatorio"
         options={{
           title: 'Relatório',
           tabBarIcon: ({ color, size }) => <FileText color={color} size={size} strokeWidth={1.8} />,
         }}
       />
       <Tabs.Screen
-        name="business"
+        name="turbine"
         options={{
           title: 'Turbine seu Negócio',
           tabBarLabelStyle: { fontSize: 9, fontWeight: '700', marginTop: 3 },

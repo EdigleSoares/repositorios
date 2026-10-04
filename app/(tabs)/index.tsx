@@ -1,25 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AudioLines, Check, Pause, Zap } from 'lucide-react-native';
-import { AppState, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, AppState, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BankSelector } from '@/components/BankSelector';
-import { NotificationAccessCard } from '@/components/NotificationAccessCard';
-import { PixSimulator } from '@/components/PixSimulator';
+import { NotificationPermissionModal } from '@/components/NotificationPermissionModal';
 import { StatusToggle } from '@/components/StatusToggle';
 import { theme } from '@/constants/theme';
 import {
   hasNotificationAccess,
   NotificationListenerUnavailableError,
   openNotificationAccessSettings,
-  subscribeToNubankPix,
-} from '@/services/nubankListener';
+  subscribeToBankPix,
+} from '@/services/bankNotificationListener';
 
 export default function HomeScreen() {
   const [active, setActive] = useState(true);
   const [notificationAccessGranted, setNotificationAccessGranted] = useState(false);
   const [notificationListenerAvailable, setNotificationListenerAvailable] = useState(true);
-  const [notificationMessage, setNotificationMessage] = useState<string>();
+  const [permissionChecked, setPermissionChecked] = useState(false);
   const [notificationError, setNotificationError] = useState<string>();
   const activeRef = useRef(active);
 
@@ -28,14 +27,17 @@ export default function HomeScreen() {
       .then((granted) => {
         setNotificationListenerAvailable(true);
         setNotificationAccessGranted(granted);
+        setPermissionChecked(true);
         setNotificationError(undefined);
       })
       .catch((error: unknown) => {
         if (error instanceof NotificationListenerUnavailableError) {
           setNotificationListenerAvailable(false);
           setNotificationAccessGranted(false);
+          setPermissionChecked(true);
           setNotificationError(undefined);
         } else {
+          setPermissionChecked(true);
           setNotificationError(
             error instanceof Error ? error.message : 'Não foi possível verificar o acesso às notificações.',
           );
@@ -53,18 +55,22 @@ export default function HomeScreen() {
   }, [refreshNotificationAccess]);
 
   useEffect(() => {
-    if (Platform.OS !== 'android' || !active || !notificationListenerAvailable) return;
+    if (
+      Platform.OS !== 'android' ||
+      !active ||
+      !notificationListenerAvailable ||
+      !notificationAccessGranted
+    ) {
+      return;
+    }
 
     let cancelled = false;
     let notificationSubscription: { remove: () => void } | null = null;
 
-    void subscribeToNubankPix(
+    void subscribeToBankPix(
       () => activeRef.current,
-      (receipt) => {
-        setNotificationError(undefined);
-        setNotificationMessage(`Pix de R$ ${receipt.amount} recebido de ${receipt.payer}. Anúncio iniciado.`);
-      },
-      (error) => setNotificationError(error.message),
+      undefined,
+      (error) => Alert.alert('Atenção ao Pix recebido', error.message),
     )
       .then((subscription) => {
         if (cancelled) {
@@ -80,9 +86,10 @@ export default function HomeScreen() {
             setNotificationAccessGranted(false);
             setNotificationError(undefined);
           } else {
-            setNotificationError(
-              error instanceof Error ? error.message : 'Não foi possível iniciar a leitura do Nubank.',
-            );
+            const message =
+              error instanceof Error ? error.message : 'Não foi possível iniciar a leitura das notificações.';
+            setNotificationError(message);
+            Alert.alert('Leitura de notificações indisponível', message);
           }
         }
       });
@@ -91,7 +98,7 @@ export default function HomeScreen() {
       cancelled = true;
       notificationSubscription?.remove();
     };
-  }, [active, notificationListenerAvailable]);
+  }, [active, notificationAccessGranted, notificationListenerAvailable]);
 
   const toggleStatus = () => {
     const next = !activeRef.current;
@@ -106,9 +113,10 @@ export default function HomeScreen() {
       setNotificationError(undefined);
       await openNotificationAccessSettings();
     } catch (error) {
-      setNotificationError(
-        error instanceof Error ? error.message : 'Não foi possível abrir as configurações do Android.',
-      );
+      const message =
+        error instanceof Error ? error.message : 'Não foi possível abrir as configurações do Android.';
+      setNotificationError(message);
+      Alert.alert('Configurações indisponíveis', message);
     }
   };
 
@@ -145,49 +153,17 @@ export default function HomeScreen() {
 
         <StatusToggle active={active} onToggle={toggleStatus} />
 
-        {Platform.OS === 'android' && (
-          <>
-            <View style={styles.sectionHeading}>
-              <Text style={styles.sectionTitle}>Conexão Nubank</Text>
-              <Text style={styles.stepLabel}>ANDROID</Text>
-            </View>
-            <NotificationAccessCard
-              granted={notificationAccessGranted}
-              available={notificationListenerAvailable}
-              message={
-                active && notificationAccessGranted
-                  ? notificationMessage ?? 'Leitura ativa. Aguardando um Pix do Nubank.'
-                  : notificationAccessGranted
-                    ? 'Acesso autorizado. Ative o PixFala para anunciar os Pix.'
-                    : undefined
-              }
-              error={notificationError}
-              onPress={handleNotificationAccess}
-            />
-          </>
-        )}
-
-        <View style={styles.sectionHeading}>
-          <Text style={styles.sectionTitle}>Teste rápido</Text>
-          <Text style={styles.stepLabel}>SIMULAÇÃO</Text>
-        </View>
-        <PixSimulator active={active} />
-
-        <View style={styles.sectionHeading}>
-          <Text style={styles.sectionTitle}>Sua configuração</Text>
-          <Text style={styles.stepLabel}>01 / 02</Text>
-        </View>
+        <Text style={styles.sectionTitle}>Banco para Pix</Text>
         <BankSelector />
-
-        <View style={styles.note}>
-          <View style={styles.noteMark}>
-            <Zap color={theme.colors.neon} size={15} />
-          </View>
-          <Text style={styles.noteText}>
-            Mantenha o app por perto para não perder nenhum pagamento.
-          </Text>
-        </View>
       </ScrollView>
+      {Platform.OS === 'android' && (
+        <NotificationPermissionModal
+          visible={permissionChecked && !notificationAccessGranted}
+          available={notificationListenerAvailable}
+          error={notificationError}
+          onPress={handleNotificationAccess}
+        />
+      )}
     </SafeAreaView>
   );
 }
@@ -204,7 +180,7 @@ const styles = StyleSheet.create({
   },
   brand: {
     alignItems: 'center',
-    marginBottom: 30,
+    marginBottom: 28,
   },
   logo: {
     width: 52,
@@ -276,47 +252,11 @@ const styles = StyleSheet.create({
   pausedText: {
     color: theme.colors.secondary,
   },
-  sectionHeading: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: 26,
-    marginBottom: 12,
-  },
   sectionTitle: {
     color: theme.colors.text,
     fontSize: 15,
     fontWeight: '700',
-  },
-  stepLabel: {
-    color: theme.colors.muted,
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 1,
-  },
-  note: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 11,
-    padding: 15,
-    marginTop: 16,
-    borderRadius: 17,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: '#12151A',
-  },
-  noteMark: {
-    width: 29,
-    height: 29,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#102319',
-  },
-  noteText: {
-    flex: 1,
-    color: theme.colors.secondary,
-    fontSize: 11,
-    lineHeight: 16,
+    marginTop: 26,
+    marginBottom: 12,
   },
 });

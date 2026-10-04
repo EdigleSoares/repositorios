@@ -6,7 +6,7 @@ import android.service.notification.StatusBarNotification
 
 class NubankNotificationListenerService : NotificationListenerService() {
   override fun onNotificationPosted(statusBarNotification: StatusBarNotification) {
-    if (statusBarNotification.packageName != NUBANK_PACKAGE) return
+    if (statusBarNotification.packageName !in SUPPORTED_BANK_PACKAGES) return
 
     val extras = statusBarNotification.notification.extras
     NubankNotificationListenerModule.dispatchNotification(
@@ -25,6 +25,16 @@ class NubankNotificationListenerService : NotificationListenerService() {
   }
 
   private companion object {
-    const val NUBANK_PACKAGE = "com.nu.production"
+    val SUPPORTED_BANK_PACKAGES = setOf(
+      "com.nu.production",
+      "com.itau",
+      "com.bradesco",
+      "br.com.bb.android",
+      "com.mercadopago.wallet",
+      "br.gov.caixa.tem",
+      "br.com.gft.caixa",
+      "br.com.intermedium",
+      "br.com.uol.ps"
+    )
   }
 }

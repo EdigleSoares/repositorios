@@ -1,8 +1,13 @@
 import { Platform } from 'react-native';
 
-import type { NubankNotificationData } from '@/modules/nubank-notification-listener/src/NubankNotificationListener.types';
+import type { BankNotificationData } from '@/modules/nubank-notification-listener/src/NubankNotificationListener.types';
+import { savePixRecord } from '@/services/pixStorage';
 import { falarPix } from '@/services/ttsService';
-import { NUBANK_PACKAGE, parseNubankNotification, type NubankPixReceipt } from '@/utils/nubankParser';
+import {
+  getBankName,
+  parseBankNotification,
+  type BankPixReceipt,
+} from '@/utils/bankPixParser';
 
 type NotificationSubscription = {
   remove: () => void;
@@ -10,7 +15,7 @@ type NotificationSubscription = {
 
 export class NotificationListenerUnavailableError extends Error {
   constructor(cause: unknown) {
-    super('O listener do Nubank não está incluído nesta instalação. Use o APK PixFala de desenvolvimento ou preview.');
+    super('O listener de notificações não está incluído nesta instalação. Use o APK PixFala de desenvolvimento ou preview.');
     this.name = 'NotificationListenerUnavailableError';
     this.cause = cause;
   }
@@ -47,27 +52,18 @@ export async function openNotificationAccessSettings(): Promise<void> {
   listener.openNotificationListenerSettings();
 }
 
-export async function subscribeToNubankPix(
+export async function subscribeToBankPix(
   isActive: () => boolean,
-  onReceipt: (receipt: NubankPixReceipt) => void,
+  onReceipt: ((receipt: BankPixReceipt) => void) | undefined,
   onError: (error: Error) => void,
 ): Promise<NotificationSubscription | null> {
   if (Platform.OS !== 'android') return null;
 
   const nativeListener = await loadNotificationListener();
-
   const recentNotifications = new Map<string, number>();
 
-  return nativeListener.addListener('onNotificationReceived', (notification: NubankNotificationData) => {
-    console.log('[PixFala] Notificação Nubank capturada:', {
-      title: notification.title,
-      text: notification.text,
-      bigText: notification.bigText,
-      subText: notification.subText,
-      summaryText: notification.summaryText,
-    });
-
-    const receipt = parseNubankNotification(notification);
+  return nativeListener.addListener('onNotificationReceived', (notification: BankNotificationData) => {
+    const receipt = parseBankNotification(notification);
     if (!receipt || !isActive()) return;
 
     const signature = [
@@ -89,9 +85,29 @@ export async function subscribeToNubankPix(
       if (oldestKey) recentNotifications.delete(oldestKey);
     }
 
-    onReceipt(receipt);
-    void falarPix(receipt.amount ?? undefined, receipt.payer ?? undefined).catch((error: unknown) => {
-      onError(error instanceof Error ? error : new Error('Não foi possível anunciar o Pix recebido.'));
-    });
+    void (async () => {
+      try {
+        await falarPix(receipt.amount ?? undefined, receipt.payer ?? undefined);
+      } catch (error) {
+        onError(error instanceof Error ? error : new Error('Não foi possível anunciar o Pix recebido.'));
+        return;
+      }
+
+      try {
+        const timestamp = Number.isFinite(notification.postTime) && notification.postTime > 0
+          ? new Date(notification.postTime).toISOString()
+          : new Date().toISOString();
+        await savePixRecord({
+          valor: receipt.amount ?? 'Não informado',
+          nomePagador: receipt.payer ?? 'Não informado',
+          banco: getBankName(notification.packageName),
+          timestamp,
+        });
+        onReceipt?.(receipt);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : 'Erro desconhecido ao salvar o histórico.';
+        onError(new Error(`O Pix foi anunciado, mas não foi possível salvar o registro: ${detail}`));
+      }
+    })();
   });
 }

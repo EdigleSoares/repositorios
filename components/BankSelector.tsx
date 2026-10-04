@@ -12,9 +12,13 @@ import { theme } from '@/constants/theme';
 
 const banks = [
   { name: 'Nubank', monogram: 'nu', color: '#8A05BE' },
-  { name: 'Banco Inter', monogram: 'in', color: '#FF7A00' },
   { name: 'Itaú', monogram: 'itaú', color: '#EC7000' },
-  { name: 'C6 Bank', monogram: 'C6', color: '#C7CDD4' },
+  { name: 'Bradesco', monogram: 'b', color: '#CC092F' },
+  { name: 'Banco do Brasil', monogram: 'bb', color: '#F8D117', textColor: '#173D80' },
+  { name: 'Mercado Pago', monogram: 'mp', color: '#009EE3' },
+  { name: 'Caixa', monogram: 'cx', color: '#0066B3' },
+  { name: 'Inter', monogram: 'in', color: '#FF7A00' },
+  { name: 'PagBank', monogram: 'p', color: '#13A867' },
 ];
 
 export function BankSelector() {
@@ -40,7 +44,7 @@ export function BankSelector() {
           onPress={() => setOpen(true)}
           style={({ pressed }) => [styles.selector, pressed && styles.pressed]}>
           <View style={[styles.bankMark, { backgroundColor: selectedBank.color }]}>
-            <Text style={[styles.bankMonogram, selectedBank.name === 'C6 Bank' && styles.darkMonogram]}>
+            <Text style={[styles.bankMonogram, selectedBank.textColor && { color: selectedBank.textColor }]}>
               {selectedBank.monogram}
             </Text>
           </View>
@@ -92,7 +96,7 @@ export function BankSelector() {
                     pressed && styles.pressed,
                   ]}>
                   <View style={[styles.bankMark, { backgroundColor: bank.color }]}>
-                    <Text style={[styles.bankMonogram, bank.name === 'C6 Bank' && styles.darkMonogram]}>
+                    <Text style={[styles.bankMonogram, bank.textColor && { color: bank.textColor }]}>
                       {bank.monogram}
                     </Text>
                   </View>
@@ -161,9 +165,6 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 15,
     fontWeight: '800',
-  },
-  darkMonogram: {
-    color: theme.colors.black,
   },
   bankCopy: {
     flex: 1,

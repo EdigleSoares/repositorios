@@ -1,6 +1,6 @@
 import type { NativeModule } from 'expo';
 
-export type NubankNotificationData = {
+export type BankNotificationData = {
   packageName: string;
   id: number;
   title: string;
@@ -12,11 +12,11 @@ export type NubankNotificationData = {
   key: string;
 };
 
-export type NubankNotificationListenerEvents = {
-  onNotificationReceived: (notification: NubankNotificationData) => void;
+export type BankNotificationListenerEvents = {
+  onNotificationReceived: (notification: BankNotificationData) => void;
 };
 
-export declare class NubankNotificationListenerModule extends NativeModule<NubankNotificationListenerEvents> {
+export declare class NubankNotificationListenerModule extends NativeModule<BankNotificationListenerEvents> {
   isNotificationPermissionGranted(): boolean;
   openNotificationListenerSettings(): void;
 }
