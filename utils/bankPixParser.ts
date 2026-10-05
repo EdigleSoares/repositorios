@@ -29,23 +29,20 @@ export function getBankName(packageName: string): string {
 }
 
 const OUTGOING_PATTERN =
-  /\b(?:compra(?:s)?|comprou|enviado|enviada|enviei|transferência\s+enviada|transferencia\s+enviada|pix\s+enviado|pix\s+realizado|transferência\s+realizada|transferencia\s+realizada|pagamento\s+realizado|pagou|débito|debito|saída|saida|agendad[oa])\b/iu;
+  /\b(?:enviado|enviada|enviou|paga\w*|realizada\s+com\s+sucesso|comprovante|compra(?:s)?|comprou|enviei|transferência\s+enviada|transferencia\s+enviada|pix\s+realizado|transferência\s+realizada|transferencia\s+realizada|pagou|débito|debito|saída|saida|agendad[oa])\b/iu;
 const INCOMING_PATTERN =
   /\b(?:recebemos|recebeu|recebida|recebido|recebimento|crédito|credito|creditado|creditada|entrada|caiu\s+(?:na|em)\s+sua\s+conta|pix\s+recebido|transferência\s+(?:pix\s+)?recebida|transferencia\s+(?:pix\s+)?recebida)\b/iu;
-const PAYMENT_AMOUNT_PATTERNS = [
-  /R\s*\$\s*((?:\d{1,3}(?:\.\d{3})+|\d+)(?:[,.]\d{1,2})?)(?![\d,])/iu,
-  /\b(?:no\s+valor\s+(?:de\s+)?|valor\s+(?:de\s+)?|recebido\s+)(?:R\s*\$\s*)?((?:\d{1,3}(?:\.\d{3})+|\d+)(?:[,.]\d{1,2})?)(?![\d,])/iu,
-];
+const PAYMENT_AMOUNT_PATTERN = /R\$\s*([\d.,]+)/iu;
+const PAYER_NAME_PATTERN =
+  /\bde\s+([\p{L}\p{M}][\p{L}\p{M} .'’-]{0,79}?)(?=\s+(?:CPF\b|no\s+valor\b|no\s+R\s*\$|chave\b)|[.!?;]|$)/iu;
 const PAYER_AFTER_AMOUNT_PATTERN =
-  /(?:R\s*\$\s*)?(?:\d{1,3}(?:\.\d{3})+|\d+)(?:[,.]\d{1,2})?\s+(?:via\s+)?(?:pix\s+)?de\s+([\p{L}\p{M}][\p{L}\p{M} .'’-]{0,59}?)(?=\s+(?:no\s+valor|valor|às|em)\b|[,.!?;]|$)/iu;
-const PAYER_BEFORE_AMOUNT_PATTERN =
-  /\b(?:você\s+recebeu\s+(?:um\s+)?pix|pix\s+recebido|transferência\s+(?:pix\s+)?recebida|transferencia\s+(?:pix\s+)?recebida|recebemos\s+sua?\s+transferência|recebemos\s+sua?\s+transferencia|recebido)\s+(?:no\s+valor\s+(?:de\s+)?)?de\s+([\p{L}\p{M}][\p{L}\p{M} .'’-]{0,59}?)(?=\s+(?:no\s+valor\s+(?:de\s+)?)?R\s*\$|\s+no\s+valor\b|[,.!?;]|$)/iu;
+  /R\$\s*[\d.,]+\s+(?:via\s+)?(?:pix\s+)?de\s+([\p{L}\p{M}][\p{L}\p{M} .'’-]{0,79}?)(?=\s+(?:CPF\b|no\s+valor\b|no\s+R\s*\$|chave\b)|[.!?;]|$)/iu;
 
 export { SUPPORTED_BANK_PACKAGES };
 
 export type BankPixReceipt = {
-  amount: string | null;
-  payer: string | null;
+  amount: string;
+  payer: string;
 };
 
 function getNotificationContent(notification: BankNotificationData): string[] {
@@ -63,14 +60,16 @@ export function parseBankNotification(notification: BankNotificationData): BankP
   if (OUTGOING_PATTERN.test(allContent) || !INCOMING_PATTERN.test(allContent)) return null;
 
   const amount = candidates
-    .map((content) => PAYMENT_AMOUNT_PATTERNS.map((pattern) => content.match(pattern)?.[1]).find(Boolean))
-    .map((value) => (value ? formatarValorMonetario(value) : null))
+    .map((content) => content.match(PAYMENT_AMOUNT_PATTERN)?.[1])
+    .map((value) => (value ? formatarValorMonetario(value.replace(/[.,]+$/u, '')) : null))
     .find((value) => value !== null) ?? null;
 
+  if (!amount) return null;
+
   const payerText = candidates
-    .map((content) => content.match(PAYER_AFTER_AMOUNT_PATTERN)?.[1] ?? content.match(PAYER_BEFORE_AMOUNT_PATTERN)?.[1])
+    .map((content) => content.match(PAYER_NAME_PATTERN)?.[1] ?? content.match(PAYER_AFTER_AMOUNT_PATTERN)?.[1])
     .find((value) => value !== undefined);
   const payer = payerText ? formatarNomePagador(payerText) : null;
 
-  return { amount, payer };
+  return { amount, payer: payer ?? 'Cliente' };
 }

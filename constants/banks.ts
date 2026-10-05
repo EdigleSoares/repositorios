@@ -7,7 +7,11 @@ export type BankOption = {
   packageNames: string[];
 };
 
-export const ALL_BANKS_ID = 'all';
+export type BankSelectionOption = Omit<BankOption, 'packageNames'> & {
+  packageName: string;
+};
+
+export const ALL_BANKS_ID = 'ALL';
 
 export const banks: BankOption[] = [
   { id: ALL_BANKS_ID, name: 'Todos os bancos', monogram: '★', color: '#00A844', packageNames: [] },
@@ -31,8 +35,37 @@ export const SUPPORTED_BANK_PACKAGES = new Set(
   banks.flatMap((bank) => bank.packageNames),
 );
 
+export const bankSelectionOptions: BankSelectionOption[] = [
+  {
+    id: ALL_BANKS_ID,
+    name: 'Todos os bancos',
+    monogram: '★',
+    color: '#00A844',
+    packageName: ALL_BANKS_ID,
+  },
+  ...banks.flatMap((bank) =>
+    bank.packageNames.map((packageName, index) => ({
+      id: packageName,
+      name:
+        bank.id === 'bradesco' && index === 1
+          ? 'Next'
+          : bank.id === 'itau' && index === 1
+            ? 'Itaú Personnalité'
+            : bank.id === 'stone'
+              ? index === 0
+                ? 'Ton'
+                : 'Stone'
+              : bank.name,
+      monogram: bank.monogram,
+      color: bank.color,
+      ...(bank.textColor ? { textColor: bank.textColor } : {}),
+      packageName,
+    })),
+  ),
+];
+
 export function isBankSelectionId(value: string): boolean {
-  return banks.some((bank) => bank.id === value);
+  return value === ALL_BANKS_ID || SUPPORTED_BANK_PACKAGES.has(value);
 }
 
 export function getBankForPackage(packageName: string): BankOption | undefined {

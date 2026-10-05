@@ -18,15 +18,15 @@ export function falarPix(valor?: string, pagador?: string): Promise<void> {
     throw new Error('Informe um nome de pagador válido.');
   }
 
-  const valorFalado = valorFormatado ? formatarValorPorExtenso(valorFormatado) : '';
-  const nomeParaVoz = formatarNomeParaVoz(nomePagador ?? undefined);
-  const agradecimento = escolherFraseDeAgradecimento();
-  const texto = `Pix recebido:${valorFalado ? ` ${valorFalado}.` : ''} ${agradecimento}${
-    nomeParaVoz ? `, ${nomeParaVoz}` : ''
-  }!`;
+  const voiceName = formatarNomeParaVoz(nomePagador ?? undefined);
+  const amountInWords = valorFormatado ? formatarValorPorExtenso(valorFormatado) : 'valor não informado';
+  const thankYou = escolherFraseDeAgradecimento();
+  const text = `Olá! Pix recebido no valor de ${amountInWords}${
+    voiceName ? ` de ${voiceName}` : ''
+  }. ${thankYou}!`;
 
   return new Promise((resolve, reject) => {
-    Speech.speak(texto, {
+    Speech.speak(text, {
       language: 'pt-BR',
       rate: 0.92,
       onDone: resolve,

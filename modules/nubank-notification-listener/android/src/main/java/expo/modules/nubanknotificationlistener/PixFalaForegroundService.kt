@@ -18,10 +18,11 @@ class PixFalaForegroundService : Service() {
         NotificationChannel(
           CHANNEL_ID,
           "Monitoramento do Pix",
-          NotificationManager.IMPORTANCE_LOW
+          NotificationManager.IMPORTANCE_HIGH
         ).apply {
           description = "Mantém ativo o monitoramento de Pix recebido."
           setShowBadge(false)
+          lockscreenVisibility = Notification.VISIBILITY_PUBLIC
         }
       )
     }
@@ -45,17 +46,18 @@ class PixFalaForegroundService : Service() {
 
     return builder
       .setSmallIcon(android.R.drawable.ic_dialog_info)
-      .setContentTitle("PixFala ativo")
+      .setContentTitle("PixFala Ativo")
       .setContentText("Monitorando Pix recebidos em segundo plano.")
       .setCategory(Notification.CATEGORY_SERVICE)
-      .setPriority(Notification.PRIORITY_LOW)
+      .setPriority(Notification.PRIORITY_HIGH)
+      .setVisibility(Notification.VISIBILITY_PUBLIC)
       .setOngoing(true)
       .setOnlyAlertOnce(true)
       .build()
   }
 
   companion object {
-    private const val CHANNEL_ID = "pixfala_notification_listener"
+    private const val CHANNEL_ID = "pixfala_notification_listener_v2"
     private const val NOTIFICATION_ID = 7914
   }
 }

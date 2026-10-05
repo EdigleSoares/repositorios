@@ -8,6 +8,8 @@ export type PixRecord = {
   nomePagador: string;
   banco: string;
   timestamp: string;
+  packageName?: string;
+  rawNotificationText?: string;
 };
 
 type PixRecordsListener = (records: PixRecord[]) => void;
@@ -25,6 +27,8 @@ function isPixRecord(value: unknown): value is PixRecord {
     typeof record.nomePagador === 'string' &&
     typeof record.banco === 'string' &&
     typeof record.timestamp === 'string' &&
+    (record.packageName === undefined || typeof record.packageName === 'string') &&
+    (record.rawNotificationText === undefined || typeof record.rawNotificationText === 'string') &&
     Number.isFinite(Date.parse(record.timestamp))
   );
 }

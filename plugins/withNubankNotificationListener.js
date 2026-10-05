@@ -8,6 +8,7 @@ const FOREGROUND_SERVICE =
 const FOREGROUND_PERMISSION = 'android.permission.FOREGROUND_SERVICE';
 const SPECIAL_USE_PERMISSION = 'android.permission.FOREGROUND_SERVICE_SPECIAL_USE';
 const POST_NOTIFICATIONS_PERMISSION = 'android.permission.POST_NOTIFICATIONS';
+const SYSTEM_ALERT_WINDOW_PERMISSION = 'android.permission.SYSTEM_ALERT_WINDOW';
 
 module.exports = function withNubankNotificationListener(config) {
   return withAndroidManifest(config, (modConfig) => {
@@ -17,6 +18,7 @@ module.exports = function withNubankNotificationListener(config) {
       FOREGROUND_PERMISSION,
       SPECIAL_USE_PERMISSION,
       POST_NOTIFICATIONS_PERMISSION,
+      SYSTEM_ALERT_WINDOW_PERMISSION,
     ]) {
       if (!permissions.some((item) => item.$?.['android:name'] === permission)) {
         permissions.push({ $: { 'android:name': permission } });

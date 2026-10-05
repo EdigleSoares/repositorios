@@ -11,19 +11,25 @@ import {
 } from 'react-native';
 
 import { theme } from '@/constants/theme';
-import { banks } from '@/constants/banks';
-import { getSelectedBankId, saveSelectedBankId } from '@/services/bankSelection';
+import { bankSelectionOptions } from '@/constants/banks';
+import {
+  getSelectedBankPackage,
+  saveSelectedBankPackage,
+} from '@/services/bankSelection';
 
 export function BankSelector() {
-  const [selectedBank, setSelectedBank] = useState(banks[1]);
+  const [selectedBank, setSelectedBank] = useState(
+    bankSelectionOptions.find((bank) => bank.packageName === 'com.nu.production') ??
+      bankSelectionOptions[0],
+  );
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
     let mounted = true;
-    void getSelectedBankId()
-      .then((selectedId) => {
+    void getSelectedBankPackage()
+      .then((packageName) => {
         if (mounted) {
-          const bank = banks.find((option) => option.id === selectedId);
+          const bank = bankSelectionOptions.find((option) => option.packageName === packageName);
           if (bank) setSelectedBank(bank);
         }
       })
@@ -99,18 +105,21 @@ export function BankSelector() {
               showsVerticalScrollIndicator={false}
               style={styles.bankOptions}
               contentContainerStyle={styles.bankOptionsContent}>
-              {banks.map((bank) => {
-                const selected = bank.name === selectedBank.name;
+              {bankSelectionOptions.map((bank) => {
+                const selected = bank.packageName === selectedBank.packageName;
                 return (
                   <Pressable
-                    key={bank.name}
+                    key={bank.packageName}
                     accessibilityRole="button"
                     accessibilityState={{ selected }}
                     onPress={() => {
-                      void saveSelectedBankId(bank.id)
+                      void saveSelectedBankPackage(bank.packageName)
                         .then(() => {
                           setSelectedBank(bank);
                           setOpen(false);
+                          console.log(
+                            '[PixFala] Banco alterado e salvo com sucesso: ' + bank.packageName,
+                          );
                         })
                         .catch((error: unknown) => {
                           Alert.alert(

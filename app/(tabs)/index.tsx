@@ -3,16 +3,19 @@ import { AudioLines, Check, Pause, Zap } from 'lucide-react-native';
 import { Alert, AppState, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { BankSelector } from '@/components/BankSelector';
-import { BatteryOptimizationModal } from '@/components/BatteryOptimizationModal';
-import { NotificationPermissionModal } from '@/components/NotificationPermissionModal';
+import {
+  PermissionSetupModal,
+  type PermissionStep,
+} from '@/components/PermissionSetupModal';
 import { StatusToggle } from '@/components/StatusToggle';
 import { theme } from '@/constants/theme';
 import {
   hasNotificationAccess,
   hasBatteryOptimizationExemption,
+  hasOverlayPermission,
   NotificationListenerUnavailableError,
   openNotificationAccessSettings,
+  requestOverlayPermission,
   requestBatteryOptimizationExemption,
   subscribeToBankPix,
 } from '@/services/bankNotificationListener';
@@ -20,55 +23,45 @@ import {
 export default function HomeScreen() {
   const [active, setActive] = useState(true);
   const [notificationAccessGranted, setNotificationAccessGranted] = useState(false);
+  const [overlayPermissionGranted, setOverlayPermissionGranted] = useState(false);
   const [notificationListenerAvailable, setNotificationListenerAvailable] = useState(true);
   const [permissionChecked, setPermissionChecked] = useState(false);
-  const [notificationError, setNotificationError] = useState<string>();
   const [batteryOptimizationExempt, setBatteryOptimizationExempt] = useState(false);
-  const [batteryPermissionChecked, setBatteryPermissionChecked] = useState(false);
-  const [batteryPermissionError, setBatteryPermissionError] = useState<string>();
+  const [permissionError, setPermissionError] = useState<string>();
   const activeRef = useRef(active);
 
   const refreshNotificationAccess = useCallback(() => {
-    void hasNotificationAccess()
-      .then(async (granted) => {
+    void Promise.all([
+      hasNotificationAccess(),
+      hasOverlayPermission(),
+      hasBatteryOptimizationExemption(),
+    ])
+      .then(([notificationGranted, overlayGranted, batteryExempt]) => {
         setNotificationListenerAvailable(true);
-        setNotificationAccessGranted(granted);
+        setNotificationAccessGranted(notificationGranted);
+        setOverlayPermissionGranted(overlayGranted);
+        setBatteryOptimizationExempt(batteryExempt);
+        setPermissionError(undefined);
         setPermissionChecked(true);
-        setNotificationError(undefined);
-        if (!granted) {
-          setBatteryOptimizationExempt(false);
-          setBatteryPermissionChecked(false);
-          setBatteryPermissionError(undefined);
-          return;
-        }
-
-        setBatteryPermissionError(undefined);
-        try {
-          const exempt = await hasBatteryOptimizationExemption();
-          setBatteryOptimizationExempt(exempt);
-          setBatteryPermissionChecked(true);
-        } catch (error) {
-          setBatteryOptimizationExempt(false);
-          setBatteryPermissionChecked(true);
-          setBatteryPermissionError(
-            error instanceof Error
-              ? error.message
-              : 'Não foi possível verificar as restrições de bateria.',
-          );
-        }
       })
       .catch((error: unknown) => {
         if (error instanceof NotificationListenerUnavailableError) {
           setNotificationListenerAvailable(false);
           setNotificationAccessGranted(false);
+          setOverlayPermissionGranted(false);
           setBatteryOptimizationExempt(false);
           setPermissionChecked(true);
-          setBatteryPermissionChecked(false);
-          setNotificationError(undefined);
+          setPermissionError(undefined);
         } else {
           setPermissionChecked(true);
-          setNotificationError(
-            error instanceof Error ? error.message : 'Não foi possível verificar o acesso às notificações.',
+          setNotificationListenerAvailable(true);
+          setNotificationAccessGranted(false);
+          setOverlayPermissionGranted(false);
+          setBatteryOptimizationExempt(false);
+          setPermissionError(
+            error instanceof Error
+              ? `Não foi possível verificar as permissões: ${error.message}`
+              : 'Não foi possível verificar as permissões do Android.',
           );
         }
       });
@@ -89,7 +82,7 @@ export default function HomeScreen() {
       !active ||
       !notificationListenerAvailable ||
       !notificationAccessGranted ||
-      !batteryPermissionChecked ||
+      !overlayPermissionGranted ||
       !batteryOptimizationExempt
     ) {
       return;
@@ -115,11 +108,11 @@ export default function HomeScreen() {
           if (error instanceof NotificationListenerUnavailableError) {
             setNotificationListenerAvailable(false);
             setNotificationAccessGranted(false);
-            setNotificationError(undefined);
+            setPermissionError(undefined);
           } else {
             const message =
               error instanceof Error ? error.message : 'Não foi possível iniciar a leitura das notificações.';
-            setNotificationError(message);
+            setPermissionError(message);
             Alert.alert('Leitura de notificações indisponível', message);
           }
         }
@@ -132,9 +125,9 @@ export default function HomeScreen() {
   }, [
     active,
     batteryOptimizationExempt,
-    batteryPermissionChecked,
     notificationAccessGranted,
     notificationListenerAvailable,
+    overlayPermissionGranted,
   ]);
 
   const toggleStatus = () => {
@@ -143,31 +136,23 @@ export default function HomeScreen() {
     setActive(next);
   };
 
-  const handleNotificationAccess = async () => {
+  const handlePermissionStep = async (step: PermissionStep) => {
     if (!notificationListenerAvailable) return;
 
     try {
-      setNotificationError(undefined);
-      await openNotificationAccessSettings();
+      setPermissionError(undefined);
+      if (step === 'notifications') {
+        await openNotificationAccessSettings();
+      } else if (step === 'overlay') {
+        await requestOverlayPermission();
+      } else {
+        await requestBatteryOptimizationExemption();
+      }
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : 'Não foi possível abrir as configurações do Android.';
-      setNotificationError(message);
-      Alert.alert('Configurações indisponíveis', message);
-    }
-  };
-
-  const handleBatteryOptimization = async () => {
-    if (!notificationListenerAvailable) return;
-
-    try {
-      setBatteryPermissionError(undefined);
-      await requestBatteryOptimizationExemption();
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Não foi possível abrir as configurações de bateria.';
-      setBatteryPermissionError(message);
-      Alert.alert('Configuração de bateria indisponível', message);
+        error instanceof Error ? error.message : 'Não foi possível abrir a configuração solicitada.';
+      setPermissionError(message);
+      Alert.alert('Configuração indisponível', message);
     }
   };
 
@@ -204,28 +189,36 @@ export default function HomeScreen() {
 
         <StatusToggle active={active} onToggle={toggleStatus} />
 
-        <Text style={styles.sectionTitle}>Banco para Pix</Text>
-        <BankSelector />
+        <Text style={styles.sectionTitle}>Captura de Pix</Text>
+        <View style={styles.captureCard}>
+          <View style={styles.captureIcon}>
+            <Zap color={theme.colors.neon} size={18} fill={theme.colors.neon} />
+          </View>
+          <View style={styles.captureCopy}>
+            <Text style={styles.captureTitle}>Detecção automática</Text>
+            <Text style={styles.captureDescription}>
+              O PixFala analisa notificações recebidas de qualquer aplicativo e ignora mensagens que não indiquem um Pix recebido.
+            </Text>
+          </View>
+        </View>
         <View style={styles.licenseStatus}>
           <Check color={theme.colors.neon} size={15} strokeWidth={2.6} />
           <Text style={styles.licenseStatusText}>Status da Licença: Ativa ✓</Text>
         </View>
       </ScrollView>
       {Platform.OS === 'android' && (
-        <>
-          <NotificationPermissionModal
-            visible={permissionChecked && !notificationAccessGranted}
-            available={notificationListenerAvailable}
-            error={notificationError}
-            onPress={handleNotificationAccess}
-          />
-          <BatteryOptimizationModal
-            visible={permissionChecked && notificationAccessGranted && batteryPermissionChecked && !batteryOptimizationExempt}
-            available={notificationListenerAvailable}
-            error={batteryPermissionError}
-            onPress={handleBatteryOptimization}
-          />
-        </>
+        <PermissionSetupModal
+          visible={
+            permissionChecked &&
+            (!notificationAccessGranted || !overlayPermissionGranted || !batteryOptimizationExempt)
+          }
+          available={notificationListenerAvailable}
+          notificationGranted={notificationAccessGranted}
+          overlayGranted={overlayPermissionGranted}
+          batteryGranted={batteryOptimizationExempt}
+          error={permissionError}
+          onOpenStep={(step) => void handlePermissionStep(step)}
+        />
       )}
     </SafeAreaView>
   );
@@ -322,6 +315,27 @@ const styles = StyleSheet.create({
     marginTop: 26,
     marginBottom: 12,
   },
+  captureCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    padding: 16,
+    borderRadius: theme.radius.card,
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  captureIcon: {
+    width: 38,
+    height: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 13,
+    backgroundColor: '#10291A',
+  },
+  captureCopy: { flex: 1 },
+  captureTitle: { color: theme.colors.text, fontSize: 12, fontWeight: '700' },
+  captureDescription: { color: theme.colors.secondary, fontSize: 10, lineHeight: 15, marginTop: 5 },
   licenseStatus: {
     flexDirection: 'row',
     alignItems: 'center',

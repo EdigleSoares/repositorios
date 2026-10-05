@@ -2,17 +2,26 @@ package expo.modules.nubanknotificationlistener
 
 import android.content.ComponentName
 import android.content.Intent
+import android.graphics.Color
+import android.graphics.PixelFormat
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.os.Build
 import android.provider.Settings
+import android.util.Log
+import android.view.Gravity
+import android.view.View
+import android.view.WindowManager
+import android.widget.TextView
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 
 class NubankNotificationListenerModule : Module() {
   private val mainHandler = Handler(Looper.getMainLooper())
+  private var pixOverlay: View? = null
 
   override fun definition() = ModuleDefinition {
     Name("NubankNotificationListener")
@@ -38,6 +47,98 @@ class NubankNotificationListenerModule : Module() {
         Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
           .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
       )
+      Unit
+    }
+
+    Function("isOverlayPermissionGranted") {
+      val context = appContext.reactContext ?: return@Function false
+      if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return@Function true
+      Settings.canDrawOverlays(context)
+    }
+
+    Function("openOverlayPermissionSettings") {
+      val context = appContext.reactContext
+        ?: throw IllegalStateException("O contexto Android não está disponível.")
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        context.startActivity(
+          Intent(
+            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+            Uri.parse("package:${context.packageName}")
+          ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+      }
+      Unit
+    }
+
+    Function("showPixOverlay") { amount: String, payer: String ->
+      val context = appContext.reactContext
+        ?: throw IllegalStateException("O contexto Android não está disponível.")
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(context)) {
+        throw IllegalStateException("A permissão de sobreposição não foi concedida.")
+      }
+      val windowManager = context.getSystemService(WindowManager::class.java)
+        ?: throw IllegalStateException("O gerenciador de janelas Android não está disponível.")
+      val applicationContext = context.applicationContext
+      val density = applicationContext.resources.displayMetrics.density
+      val card = TextView(applicationContext).apply {
+        text = "Pix recebido\nR$ $amount de $payer"
+        setTextColor(Color.WHITE)
+        textSize = 16f
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding((20 * density).toInt(), (16 * density).toInt(), (20 * density).toInt(), (16 * density).toInt())
+        background = GradientDrawable().apply {
+          setColor(Color.rgb(22, 25, 32))
+          cornerRadius = 18 * density
+          setStroke((1.5f * density).toInt(), Color.rgb(0, 230, 91))
+        }
+        elevation = 10 * density
+      }
+      val overlayType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+      } else {
+        @Suppress("DEPRECATION")
+        WindowManager.LayoutParams.TYPE_PHONE
+      }
+      val layoutParams = WindowManager.LayoutParams(
+        WindowManager.LayoutParams.MATCH_PARENT,
+        WindowManager.LayoutParams.WRAP_CONTENT,
+        overlayType,
+        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+          WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+          WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+        PixelFormat.TRANSLUCENT
+      ).apply {
+        gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+        y = (24 * density).toInt()
+      }
+
+      mainHandler.post {
+        pixOverlay?.let { previousOverlay ->
+          try {
+            windowManager.removeView(previousOverlay)
+          } catch (error: IllegalArgumentException) {
+            Log.w(TAG, "A confirmação flutuante anterior já havia sido removida.", error)
+          }
+        }
+        pixOverlay = card
+        try {
+          windowManager.addView(card, layoutParams)
+        } catch (error: RuntimeException) {
+          pixOverlay = null
+          Log.e(TAG, "Não foi possível adicionar a confirmação flutuante do Pix.", error)
+          return@post
+        }
+        mainHandler.postDelayed({
+          if (pixOverlay === card) {
+            try {
+              windowManager.removeView(card)
+            } catch (error: IllegalArgumentException) {
+              Log.w(TAG, "A confirmação flutuante do Pix já havia sido removida.", error)
+            }
+            pixOverlay = null
+          }
+        }, OVERLAY_DURATION_MS)
+      }
       Unit
     }
 
@@ -102,6 +203,9 @@ class NubankNotificationListenerModule : Module() {
   }
 
   companion object {
+    private const val TAG = "PixFalaNotification"
+    private const val OVERLAY_DURATION_MS = 5_000L
+
     @Volatile
     private var activeInstance: NubankNotificationListenerModule? = null
 
