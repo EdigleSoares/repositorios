@@ -28,7 +28,7 @@ O escopo inicial foi UI, tema e navegação. O projeto passou a incluir recursos
 
 - `app/_layout.tsx`: layout raiz e configuração global do Expo Router.
 - `app/(tabs)/_layout.tsx`: barra de abas e ícones; foguete da aba Turbine tem pulsação sutil.
-- `app/(tabs)/index.tsx`: tela inicial, estado do monitoramento, fluxo de permissões, cobrança Pix e configuração da chave.
+- `app/(tabs)/index.tsx`: tela inicial com marca centralizada no header; ordem das sessões: monitoramento, cobrança QR Pix, configuração da chave, captura e licença. O bloco “Painel de controle / Tudo em dia” foi removido para liberar espaço vertical.
 - `app/(tabs)/relatorio.tsx`: relatório de recebimentos.
 - `app/(tabs)/turbine.tsx`: tela de promoção/recursos para negócios.
 - `constants/theme.ts`: tokens do tema visual.
@@ -114,6 +114,7 @@ O serviço TS e a fila JS **ainda existem**; portanto, a migração não removeu
 - Falha ou timeout encerra a tentativa atual e agenda nova inicialização/tentativa; o item fica pendente enquanto não for concluído.
 - Uma reserva JS evita que o TTS nativo e o Expo falem o mesmo item simultaneamente. Se a reserva expirar ou for liberada após falha, o TTS Android pode assumir.
 - A fila nativa também consegue formar uma fala de contingência com os dados do parser JS quando o parser nativo não reconhece o texto.
+- O texto atual nos dois mecanismos começa com “Pix recebido de [valor por extenso] de [pagador]” e termina com uma variação curta escolhida aleatoriamente: “Muito obrigado.”, “Obrigado!”, “Um ótimo dia!”, “Volte sempre!” ou “Até logo!”. Os itens persistidos antes desta alteração podem manter o texto antigo até serem processados.
 
 ### Coordenação JS/nativo
 

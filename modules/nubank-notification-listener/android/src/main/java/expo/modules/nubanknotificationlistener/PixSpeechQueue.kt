@@ -97,9 +97,8 @@ internal class PixSpeechQueue(
       ?: return false
     val payer = extractPayer(sourceText)
     val bankName = BANK_NAMES[notification.packageName] ?: notification.packageName
-    val greeting = GREETINGS.random()
     val thankYou = THANK_YOU_PHRASES.random()
-    val speech = "$greeting Pix recebido no valor de ${amountInWords(amount)} de $payer. $thankYou!"
+    val speech = "Pix recebido de ${amountInWords(amount)} de $payer. $thankYou"
     val postTime = notification.postTime
     val signature = "${notification.key}|$postTime|${notification.packageName}|$amount"
 
@@ -183,7 +182,7 @@ internal class PixSpeechQueue(
           packageName = packageName,
           amount = amount,
           payer = payer,
-          text = "Pix recebido no valor de ${amountInWords(amount)} de $payer.",
+          text = "Pix recebido de ${amountInWords(amount)} de $payer. ${THANK_YOU_PHRASES.random()}",
           signature = signature,
           capturedAt = System.currentTimeMillis(),
           stored = false,
@@ -647,13 +646,12 @@ internal class PixSpeechQueue(
       "", "cento", "duzentos", "trezentos", "quatrocentos", "quinhentos",
       "seiscentos", "setecentos", "oitocentos", "novecentos"
     )
-    private val GREETINGS = listOf("Olá!", "Atenção!", "Boa notícia!")
     private val THANK_YOU_PHRASES = listOf(
-      "Muito obrigado",
-      "Obrigado e volte sempre",
-      "Tenha um excelente dia",
-      "Agradecemos a preferência",
-      "Boas compras"
+      "Muito obrigado.",
+      "Obrigado!",
+      "Um ótimo dia!",
+      "Volte sempre!",
+      "Até logo!"
     )
     private val DIACRITICS_PATTERN = "\\p{Mn}+".toRegex()
     private val WHITESPACE_PATTERN = "\\s+".toRegex()

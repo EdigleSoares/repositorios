@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AudioLines, Check, Pause, Zap } from 'lucide-react-native';
+import { AudioLines, Check, Zap } from 'lucide-react-native';
 import { Alert, AppState, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -210,23 +210,6 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        <View style={styles.intro}>
-          <View>
-            <Text style={styles.eyebrow}>PAINEL DE CONTROLE</Text>
-            <Text style={styles.heading}>Tudo em dia.</Text>
-          </View>
-          <View style={[styles.readyChip, !active && styles.pausedChip]}>
-            {active ? (
-              <Check color={theme.colors.neon} size={14} strokeWidth={2.8} />
-            ) : (
-              <Pause color={theme.colors.secondary} size={13} strokeWidth={2.8} />
-            )}
-            <Text style={[styles.readyText, !active && styles.pausedText]}>
-              {active ? 'PRONTO' : 'PAUSADO'}
-            </Text>
-          </View>
-        </View>
-
         <Text style={styles.sectionTitle}>Monitoramento de recebimentos</Text>
         <StatusToggle active={active} onToggle={toggleStatus} />
 
@@ -281,14 +264,15 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingHorizontal: 22,
-    paddingTop: 8,
-    paddingBottom: 26,
+    paddingTop: 12,
+    paddingBottom: 20,
   },
   brand: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 13,
-    marginBottom: 16,
+    marginBottom: 8,
   },
   logo: {
     width: 52,
@@ -320,52 +304,11 @@ const styles = StyleSheet.create({
     marginTop: 2,
     letterSpacing: 0.2,
   },
-  intro: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
-    marginBottom: 14,
-  },
-  eyebrow: {
-    color: theme.colors.muted,
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 1.5,
-  },
-  heading: {
-    color: theme.colors.text,
-    fontSize: 24,
-    fontWeight: '700',
-    letterSpacing: -0.7,
-    marginTop: 5,
-  },
-  readyChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 9,
-    paddingVertical: 6,
-    marginBottom: 3,
-    borderRadius: 999,
-    backgroundColor: '#102319',
-  },
-  pausedChip: {
-    backgroundColor: theme.colors.surfaceRaised,
-  },
-  readyText: {
-    color: theme.colors.neon,
-    fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 0.7,
-  },
-  pausedText: {
-    color: theme.colors.secondary,
-  },
   sectionTitle: {
     color: theme.colors.text,
     fontSize: 15,
     fontWeight: '700',
-    marginTop: 18,
+    marginTop: 12,
     marginBottom: 8,
   },
   captureCard: {

@@ -78,9 +78,7 @@ export function falarPix(valor?: string, pagador?: string): Promise<void> {
   const voiceName = formatarNomeParaVoz(nomePagador ?? undefined);
   const amountInWords = valorFormatado ? formatarValorPorExtenso(valorFormatado) : 'valor não informado';
   const thankYou = escolherFraseDeAgradecimento();
-  const text = `Olá! Pix recebido no valor de ${amountInWords}${
-    voiceName ? ` de ${voiceName}` : ''
-  }. ${thankYou}!`;
+  const text = `Pix recebido de ${amountInWords} de ${voiceName ?? 'Cliente'}. ${thankYou}`;
 
   return new Promise<void>((resolve, reject) => {
     speechQueue.push({

@@ -37,11 +37,11 @@ const hundreds = [
 ];
 
 const THANK_YOU_PHRASES = [
-  'Muito obrigado',
-  'Obrigado e volte sempre',
-  'Tenha um excelente dia',
-  'Agradecemos a preferência',
-  'Boas compras',
+  'Muito obrigado.',
+  'Obrigado!',
+  'Um ótimo dia!',
+  'Volte sempre!',
+  'Até logo!',
 ];
 
 function numberUnderThousand(value: number): string {
