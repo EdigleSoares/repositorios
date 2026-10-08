@@ -1,7 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  AppState,
+  Alert,
+  FlatList,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowDownLeft, Clock3, RefreshCw, Trash2 } from 'lucide-react-native';
+import { ArrowDownLeft, Clock3, RefreshCw, Search, Trash2, X } from 'lucide-react-native';
 
 import { theme } from '@/constants/theme';
 import {
@@ -12,13 +22,38 @@ import {
 } from '@/services/pixStorage';
 import { formatarValorMonetario } from '@/utils/pixFormatter';
 
-function isToday(timestamp: string, now = new Date()): boolean {
-  const date = new Date(timestamp);
-  return (
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate()
-  );
+type ReportPeriod = 'today' | 'week' | 'month';
+
+const REPORT_PERIODS: { key: ReportPeriod; label: string }[] = [
+  { key: 'today', label: 'Hoje' },
+  { key: 'week', label: 'Semana' },
+  { key: 'month', label: 'Mês' },
+];
+
+const PERIOD_LABELS: Record<ReportPeriod, { total: string; list: string; caption: string }> = {
+  today: { total: 'TOTAL DE HOJE', list: 'Pix de hoje', caption: 'hoje' },
+  week: { total: 'TOTAL DA SEMANA', list: 'Pix desta semana', caption: 'nesta semana' },
+  month: { total: 'TOTAL DO MÊS', list: 'Pix deste mês', caption: 'neste mês' },
+};
+
+function getPeriodRange(period: ReportPeriod, now = new Date()): { start: Date; end: Date } {
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (period === 'week') {
+    start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
+  } else if (period === 'month') {
+    start.setDate(1);
+  }
+
+  const end = new Date(start);
+  if (period === 'week') {
+    end.setDate(end.getDate() + 7);
+  } else if (period === 'month') {
+    end.setMonth(end.getMonth() + 1);
+  } else {
+    end.setDate(end.getDate() + 1);
+  }
+
+  return { start, end };
 }
 
 function amountInCents(value: string): number {
@@ -44,10 +79,48 @@ function formatTime(timestamp: string): string {
   return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 }
 
-function filterToday(records: PixRecord[]): PixRecord[] {
+function filterPeriod(
+  records: PixRecord[],
+  period: ReportPeriod,
+  now = new Date(),
+): PixRecord[] {
+  const { start, end } = getPeriodRange(period, now);
   return records
-    .filter((record) => isToday(record.timestamp))
+    .filter((record) => {
+      const timestamp = Date.parse(record.timestamp);
+      return timestamp >= start.getTime() && timestamp < end.getTime();
+    })
     .sort((first, second) => Date.parse(second.timestamp) - Date.parse(first.timestamp));
+}
+
+function normalizeSearch(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/gu, '')
+    .toLocaleLowerCase('pt-BR')
+    .trim();
+}
+
+function matchesSearch(record: PixRecord, query: string): boolean {
+  const normalizedQuery = normalizeSearch(query);
+  if (!normalizedQuery) return true;
+
+  const normalizedPayer = normalizeSearch(record.nomePagador);
+  if (normalizedPayer.includes(normalizedQuery)) return true;
+
+  const queryDigits = normalizedQuery.replace(/\D/gu, '');
+  if (!queryDigits) return false;
+
+  const storedValueDigits = record.valor.replace(/\D/gu, '');
+  const formattedValueDigits = formatRecordValue(record.valor).replace(/\D/gu, '');
+  return storedValueDigits.includes(queryDigits) || formattedValueDigits.includes(queryDigits);
+}
+
+function formatWeekRange(now: Date): string {
+  const { start, end } = getPeriodRange('week', now);
+  end.setDate(end.getDate() - 1);
+  const format = (date: Date) => date.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+  return `${format(start)} – ${format(end)}`;
 }
 
 function PixRow({ record, last }: { record: PixRecord; last: boolean }) {
@@ -75,11 +148,22 @@ export default function ReportScreen() {
   const [records, setRecords] = useState<PixRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
+  const [period, setPeriod] = useState<ReportPeriod>('today');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [now, setNow] = useState(() => new Date());
 
-  const todayRecords = useMemo(() => filterToday(records), [records]);
+  const periodRecords = useMemo(
+    () => filterPeriod(records, period, now),
+    [now, period, records],
+  );
+  const visibleRecords = useMemo(
+    () => periodRecords.filter((record) => matchesSearch(record, searchQuery)),
+    [periodRecords, searchQuery],
+  );
+  const todayRecords = useMemo(() => filterPeriod(records, 'today', now), [now, records]);
   const totalCents = useMemo(
-    () => todayRecords.reduce((total, record) => total + amountInCents(record.valor), 0),
-    [todayRecords],
+    () => periodRecords.reduce((total, record) => total + amountInCents(record.valor), 0),
+    [periodRecords],
   );
 
   const refreshRecords = useCallback(async () => {
@@ -133,6 +217,19 @@ export default function ReportScreen() {
     };
   }, []);
 
+  useEffect(() => {
+    const refreshPeriodDate = () => setNow(new Date());
+    const interval = setInterval(refreshPeriodDate, 60_000);
+    const appStateSubscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') refreshPeriodDate();
+    });
+
+    return () => {
+      clearInterval(interval);
+      appStateSubscription.remove();
+    };
+  }, []);
+
   const confirmClearToday = () => {
     Alert.alert(
       'Limpar histórico de hoje?',
@@ -161,10 +258,10 @@ export default function ReportScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <FlatList
-        data={todayRecords}
+        data={visibleRecords}
         keyExtractor={(record) => record.id}
         renderItem={({ item, index }) => (
-          <PixRow record={item} last={index === todayRecords.length - 1} />
+          <PixRow record={item} last={index === visibleRecords.length - 1} />
         )}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
@@ -175,38 +272,88 @@ export default function ReportScreen() {
                 <Text style={styles.eyebrow}>SEU NEGÓCIO EM NÚMEROS</Text>
                 <Text style={styles.title}>Relatório</Text>
               </View>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Limpar histórico de hoje"
-                onPress={confirmClearToday}
-                disabled={todayRecords.length === 0}
-                style={({ pressed }) => [
-                  styles.clearButton,
-                  todayRecords.length === 0 && styles.disabledButton,
-                  pressed && todayRecords.length > 0 && styles.pressed,
-                ]}>
-                <Trash2 color={todayRecords.length > 0 ? '#FF8585' : theme.colors.muted} size={16} />
-                <Text style={[styles.clearLabel, todayRecords.length === 0 && styles.disabledLabel]}>
-                  Limpar hoje
-                </Text>
-              </Pressable>
+              {period === 'today' && (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Limpar histórico de hoje"
+                  onPress={confirmClearToday}
+                  disabled={todayRecords.length === 0}
+                  style={({ pressed }) => [
+                    styles.clearButton,
+                    todayRecords.length === 0 && styles.disabledButton,
+                    pressed && todayRecords.length > 0 && styles.pressed,
+                  ]}>
+                  <Trash2 color={todayRecords.length > 0 ? '#FF8585' : theme.colors.muted} size={16} />
+                  <Text style={[styles.clearLabel, todayRecords.length === 0 && styles.disabledLabel]}>
+                    Limpar hoje
+                  </Text>
+                </Pressable>
+              )}
+            </View>
+
+            <View style={styles.periodSelector}>
+              {REPORT_PERIODS.map((item) => {
+                const selected = period === item.key;
+                return (
+                  <Pressable
+                    key={item.key}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    onPress={() => setPeriod(item.key)}
+                    style={({ pressed }) => [
+                      styles.periodButton,
+                      selected && styles.periodButtonSelected,
+                      pressed && styles.pressed,
+                    ]}>
+                    <Text style={[styles.periodButtonText, selected && styles.periodButtonTextSelected]}>
+                      {item.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
             </View>
 
             <View style={styles.totalCard}>
-              <Text style={styles.cardEyebrow}>TOTAL DO DIA</Text>
+              <Text style={styles.cardEyebrow}>{PERIOD_LABELS[period].total}</Text>
               <Text style={styles.totalAmount}>{formatCurrency(totalCents)}</Text>
               <Text style={styles.totalCaption}>
-                {todayRecords.length === 1
-                  ? '1 Pix recebido hoje'
-                  : `${todayRecords.length} Pix recebidos hoje`}
+                {`${periodRecords.length} Pix ${periodRecords.length === 1 ? 'recebido' : 'recebidos'} ${PERIOD_LABELS[period].caption}`}
               </Text>
               <View style={styles.totalGlow} />
             </View>
 
+            <View style={styles.searchBox}>
+              <Search color={theme.colors.muted} size={17} />
+              <TextInput
+                accessibilityLabel="Pesquisar Pix por nome ou valor"
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                placeholder="Buscar por nome ou valor"
+                placeholderTextColor={theme.colors.muted}
+                returnKeyType="search"
+                style={styles.searchInput}
+              />
+              {searchQuery.length > 0 && (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Limpar pesquisa"
+                  onPress={() => setSearchQuery('')}
+                  hitSlop={8}>
+                  <X color={theme.colors.secondary} size={17} />
+                </Pressable>
+              )}
+            </View>
+
             <View style={styles.listHeading}>
               <View>
-                <Text style={styles.sectionTitle}>Pix de hoje</Text>
-                <Text style={styles.sectionCaption}>Atualizado conforme os recebimentos chegam</Text>
+                <Text style={styles.sectionTitle}>{PERIOD_LABELS[period].list}</Text>
+                <Text style={styles.sectionCaption}>
+                  {period === 'week'
+                    ? formatWeekRange(now)
+                    : period === 'month'
+                        ? now.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
+                      : 'Atualizado conforme os recebimentos chegam'}
+                </Text>
               </View>
               {loading && <ActivityIndicator color={theme.colors.neon} size="small" />}
             </View>
@@ -226,9 +373,13 @@ export default function ReportScreen() {
               <View style={styles.emptyIcon}>
                 <ArrowDownLeft color={theme.colors.neon} size={22} />
               </View>
-              <Text style={styles.emptyTitle}>Nenhum Pix por aqui ainda</Text>
+              <Text style={styles.emptyTitle}>
+                {searchQuery ? 'Nenhum resultado encontrado' : 'Nenhum Pix neste período'}
+              </Text>
               <Text style={styles.emptyDescription}>
-                Seus recebimentos anunciados aparecerão neste relatório.
+                {searchQuery
+                  ? 'Tente pesquisar por outro nome ou valor.'
+                  : 'Seus recebimentos aparecerão aqui conforme forem registrados.'}
               </Text>
             </View>
           )
@@ -259,6 +410,25 @@ const styles = StyleSheet.create({
   clearLabel: { color: '#FF8585', fontSize: 10, fontWeight: '700' },
   disabledLabel: { color: theme.colors.muted },
   pressed: { opacity: 0.78 },
+  periodSelector: {
+    flexDirection: 'row',
+    gap: 8,
+    padding: 5,
+    marginBottom: 15,
+    borderRadius: 16,
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  periodButton: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderRadius: 11,
+  },
+  periodButtonSelected: { backgroundColor: '#183222' },
+  periodButtonText: { color: theme.colors.secondary, fontSize: 12, fontWeight: '600' },
+  periodButtonTextSelected: { color: theme.colors.neon, fontWeight: '700' },
   totalCard: {
     overflow: 'hidden',
     padding: 20,
@@ -280,6 +450,19 @@ const styles = StyleSheet.create({
     backgroundColor: '#1C3D29',
     opacity: 0.45,
   },
+  searchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    height: 48,
+    paddingHorizontal: 14,
+    marginTop: 14,
+    borderRadius: 15,
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  searchInput: { flex: 1, color: theme.colors.text, fontSize: 12, paddingVertical: 0 },
   listHeading: {
     flexDirection: 'row',
     justifyContent: 'space-between',

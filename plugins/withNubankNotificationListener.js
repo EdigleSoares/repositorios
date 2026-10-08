@@ -13,6 +13,22 @@ const SYSTEM_ALERT_WINDOW_PERMISSION = 'android.permission.SYSTEM_ALERT_WINDOW';
 module.exports = function withNubankNotificationListener(config) {
   return withAndroidManifest(config, (modConfig) => {
     const manifest = modConfig.modResults.manifest;
+    const queries = (manifest.queries ??= []);
+    const hasTextToSpeechQuery = queries.some((query) =>
+      query.intent?.some((intent) =>
+        intent.action?.some((action) =>
+          action.$?.['android:name'] === 'android.intent.action.TTS_SERVICE',
+        ),
+      ),
+    );
+    if (!hasTextToSpeechQuery) {
+      queries.push({
+        intent: [{
+          action: [{ $: { 'android:name': 'android.intent.action.TTS_SERVICE' } }],
+        }],
+      });
+    }
+
     const permissions = (manifest['uses-permission'] ??= []);
     for (const permission of [
       FOREGROUND_PERMISSION,

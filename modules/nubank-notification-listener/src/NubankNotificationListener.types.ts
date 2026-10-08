@@ -17,6 +17,23 @@ export type BankNotificationListenerEvents = {
 };
 
 export declare class NubankNotificationListenerModule extends NativeModule<BankNotificationListenerEvents> {
+  cancelNotification(key: string): void;
+  confirmPixStored(key: string, postTime: number): void;
+  enqueueJavascriptFallback(
+    key: string,
+    postTime: number,
+    packageName: string,
+    amount: string,
+    payer: string,
+  ): boolean;
+  claimJavascriptSpeech(
+    key: string,
+    postTime: number,
+  ): 'claimed' | 'native-speaking' | 'native-fallback' | 'not-found';
+  completeJavascriptSpeech(key: string, postTime: number): boolean;
+  isMonitoringEnabled(): boolean;
+  releaseJavascriptSpeech(key: string, postTime: number): boolean;
+  setMonitoringEnabled(enabled: boolean): void;
   isNotificationPermissionGranted(): boolean;
   openNotificationListenerSettings(): void;
   isOverlayPermissionGranted(): boolean;

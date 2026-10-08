@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const PIX_RECORDS_STORAGE_KEY = '@pixfala/pix-records';
+const PIX_RECORDS_RETENTION_MONTHS = 12;
 
 export type PixRecord = {
   id: string;
@@ -51,6 +52,26 @@ async function readRecords(): Promise<PixRecord[]> {
   return parsedRecords;
 }
 
+function getRetentionCutoff(now = new Date()): Date {
+  const cutoffYear = now.getFullYear() - PIX_RECORDS_RETENTION_MONTHS / 12;
+  const lastDayOfCutoffMonth = new Date(cutoffYear, now.getMonth() + 1, 0).getDate();
+
+  return new Date(
+    cutoffYear,
+    now.getMonth(),
+    Math.min(now.getDate(), lastDayOfCutoffMonth),
+    now.getHours(),
+    now.getMinutes(),
+    now.getSeconds(),
+    now.getMilliseconds(),
+  );
+}
+
+function removeExpiredRecords(records: PixRecord[], now = new Date()): PixRecord[] {
+  const cutoff = getRetentionCutoff(now).getTime();
+  return records.filter((record) => Date.parse(record.timestamp) >= cutoff);
+}
+
 function enqueueWrite<T>(operation: () => Promise<T>): Promise<T> {
   const result = writeQueue.then(operation);
   writeQueue = result.then(
@@ -65,7 +86,15 @@ function notifyListeners(records: PixRecord[]): void {
 }
 
 export function getPixRecords(): Promise<PixRecord[]> {
-  return writeQueue.then(readRecords);
+  return enqueueWrite(async () => {
+    const records = await readRecords();
+    const retainedRecords = removeExpiredRecords(records);
+    if (retainedRecords.length !== records.length) {
+      await AsyncStorage.setItem(PIX_RECORDS_STORAGE_KEY, JSON.stringify(retainedRecords));
+      notifyListeners(retainedRecords);
+    }
+    return retainedRecords;
+  });
 }
 
 export function savePixRecord(
@@ -77,7 +106,7 @@ export function savePixRecord(
       ...record,
       id: record.id ?? `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
     };
-    const updatedRecords = [savedRecord, ...records];
+    const updatedRecords = removeExpiredRecords([savedRecord, ...records]);
     await AsyncStorage.setItem(PIX_RECORDS_STORAGE_KEY, JSON.stringify(updatedRecords));
     notifyListeners(updatedRecords);
     return savedRecord;
@@ -87,7 +116,8 @@ export function savePixRecord(
 export function clearTodayPixRecords(now = new Date()): Promise<PixRecord[]> {
   return enqueueWrite(async () => {
     const records = await readRecords();
-    const updatedRecords = records.filter((record) => {
+    const retainedRecords = removeExpiredRecords(records, now);
+    const updatedRecords = retainedRecords.filter((record) => {
       const timestamp = new Date(record.timestamp);
       return (
         timestamp.getFullYear() !== now.getFullYear() ||

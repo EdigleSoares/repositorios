@@ -8,6 +8,8 @@ import {
   type PermissionStep,
 } from '@/components/PermissionSetupModal';
 import { StatusToggle } from '@/components/StatusToggle';
+import { PixChargeGenerator } from '@/components/PixChargeGenerator';
+import { PixChargeSettings } from '@/components/PixChargeSettings';
 import { theme } from '@/constants/theme';
 import {
   hasNotificationAccess,
@@ -17,8 +19,11 @@ import {
   openNotificationAccessSettings,
   requestOverlayPermission,
   requestBatteryOptimizationExemption,
+  isPixMonitoringEnabled,
+  setPixMonitoringEnabled,
   subscribeToBankPix,
 } from '@/services/bankNotificationListener';
+import { getPixChargeConfig, type PixChargeConfig } from '@/services/pixChargeService';
 
 export default function HomeScreen() {
   const [active, setActive] = useState(true);
@@ -28,19 +33,43 @@ export default function HomeScreen() {
   const [permissionChecked, setPermissionChecked] = useState(false);
   const [batteryOptimizationExempt, setBatteryOptimizationExempt] = useState(false);
   const [permissionError, setPermissionError] = useState<string>();
+  const [pixChargeConfig, setPixChargeConfig] = useState<PixChargeConfig | null>(null);
   const activeRef = useRef(active);
+
+  useEffect(() => {
+    let mounted = true;
+    void getPixChargeConfig()
+      .then((config) => {
+        if (mounted) setPixChargeConfig(config);
+      })
+      .catch((error: unknown) => {
+        if (mounted) {
+          Alert.alert(
+            'Configuração da cobrança',
+            error instanceof Error ? error.message : 'Não foi possível carregar a chave Pix salva.',
+          );
+        }
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const refreshNotificationAccess = useCallback(() => {
     void Promise.all([
       hasNotificationAccess(),
       hasOverlayPermission(),
       hasBatteryOptimizationExemption(),
+      isPixMonitoringEnabled(),
     ])
-      .then(([notificationGranted, overlayGranted, batteryExempt]) => {
+      .then(([notificationGranted, overlayGranted, batteryExempt, monitoringEnabled]) => {
         setNotificationListenerAvailable(true);
         setNotificationAccessGranted(notificationGranted);
         setOverlayPermissionGranted(overlayGranted);
         setBatteryOptimizationExempt(batteryExempt);
+        activeRef.current = monitoringEnabled;
+        setActive(monitoringEnabled);
         setPermissionError(undefined);
         setPermissionChecked(true);
       })
@@ -50,6 +79,8 @@ export default function HomeScreen() {
           setNotificationAccessGranted(false);
           setOverlayPermissionGranted(false);
           setBatteryOptimizationExempt(false);
+          activeRef.current = false;
+          setActive(false);
           setPermissionChecked(true);
           setPermissionError(undefined);
         } else {
@@ -58,6 +89,8 @@ export default function HomeScreen() {
           setNotificationAccessGranted(false);
           setOverlayPermissionGranted(false);
           setBatteryOptimizationExempt(false);
+          activeRef.current = false;
+          setActive(false);
           setPermissionError(
             error instanceof Error
               ? `Não foi possível verificar as permissões: ${error.message}`
@@ -81,9 +114,7 @@ export default function HomeScreen() {
       Platform.OS !== 'android' ||
       !active ||
       !notificationListenerAvailable ||
-      !notificationAccessGranted ||
-      !overlayPermissionGranted ||
-      !batteryOptimizationExempt
+      !notificationAccessGranted
     ) {
       return;
     }
@@ -124,16 +155,23 @@ export default function HomeScreen() {
     };
   }, [
     active,
-    batteryOptimizationExempt,
     notificationAccessGranted,
     notificationListenerAvailable,
-    overlayPermissionGranted,
   ]);
 
   const toggleStatus = () => {
     const next = !activeRef.current;
-    activeRef.current = next;
-    setActive(next);
+    void setPixMonitoringEnabled(next)
+      .then(() => {
+        activeRef.current = next;
+        setActive(next);
+      })
+      .catch((error: unknown) => {
+        Alert.alert(
+          'Não foi possível alterar o monitoramento',
+          error instanceof Error ? error.message : 'Tente novamente.',
+        );
+      });
   };
 
   const handlePermissionStep = async (step: PermissionStep) => {
@@ -166,8 +204,10 @@ export default function HomeScreen() {
             <AudioLines color={theme.colors.neon} size={23} strokeWidth={2.4} />
             <Zap color={theme.colors.neon} size={19} fill={theme.colors.neon} strokeWidth={1.8} />
           </View>
-          <Text style={styles.brandName}>PixFala</Text>
-          <Text style={styles.brandCaption}>Seu Pix. Sua voz. Seu negócio.</Text>
+          <View style={styles.brandCopy}>
+            <Text style={styles.brandName}>PixFala</Text>
+            <Text style={styles.brandCaption}>Seu Pix. Sua voz. Seu negócio.</Text>
+          </View>
         </View>
 
         <View style={styles.intro}>
@@ -187,7 +227,17 @@ export default function HomeScreen() {
           </View>
         </View>
 
+        <Text style={styles.sectionTitle}>Monitoramento de recebimentos</Text>
         <StatusToggle active={active} onToggle={toggleStatus} />
+
+        <Text style={styles.sectionTitle}>Cobrança no balcão</Text>
+        <PixChargeGenerator config={pixChargeConfig} />
+
+        <Text style={styles.sectionTitle}>Configuração da cobrança</Text>
+        <PixChargeSettings
+          config={pixChargeConfig}
+          onSaved={setPixChargeConfig}
+        />
 
         <Text style={styles.sectionTitle}>Captura de Pix</Text>
         <View style={styles.captureCard}>
@@ -231,12 +281,14 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingHorizontal: 22,
-    paddingTop: 12,
+    paddingTop: 8,
     paddingBottom: 26,
   },
   brand: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 28,
+    gap: 13,
+    marginBottom: 16,
   },
   logo: {
     width: 52,
@@ -259,12 +311,13 @@ const styles = StyleSheet.create({
     fontSize: 23,
     fontWeight: '800',
     letterSpacing: -0.7,
-    marginTop: 8,
+    marginTop: 0,
   },
+  brandCopy: { alignItems: 'flex-start' },
   brandCaption: {
     color: theme.colors.secondary,
     fontSize: 12,
-    marginTop: 4,
+    marginTop: 2,
     letterSpacing: 0.2,
   },
   intro: {
@@ -312,8 +365,8 @@ const styles = StyleSheet.create({
     color: theme.colors.text,
     fontSize: 15,
     fontWeight: '700',
-    marginTop: 26,
-    marginBottom: 12,
+    marginTop: 18,
+    marginBottom: 8,
   },
   captureCard: {
     flexDirection: 'row',

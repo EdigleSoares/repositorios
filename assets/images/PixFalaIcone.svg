@@ -1,0 +1,14 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Fundo Arredondado (Squircle) -->
+  <rect width="512" height="512" rx="128" fill="#0C1B13"/>
+  <rect x="8" y="8" width="496" height="496" rx="120" stroke="#1B3828" stroke-width="16"/>
+
+  <!-- Onda Sonora (4 barras com pontas arredondadas) -->
+  <rect x="110" y="216" width="28" height="80" rx="14" fill="#00FF66"/>
+  <rect x="158" y="166" width="28" height="180" rx="14" fill="#00FF66"/>
+  <rect x="206" y="196" width="28" height="120" rx="14" fill="#00FF66"/>
+  <rect x="254" y="226" width="28" height="60" rx="14" fill="#00FF66"/>
+
+  <!-- Símbolo Pix Stylized (Raio/Losango estilizado) -->
+  <path d="M360 170L310 240H350L310 342L400 250H355L390 170H360Z" fill="#00FF66" stroke="#00FF66" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

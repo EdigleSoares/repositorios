@@ -13,6 +13,7 @@ type NotificationSubscription = {
 const BANK_PACKAGE_NAMES: Record<string, string> = {
   'com.nu.production': 'Nubank',
   'com.bmg.banco.mobile': 'BMG',
+  'br.com.bancobmg.bancodigital': 'BMG',
   'com.neon': 'Neon',
   'com.c6bank.app': 'C6 Bank',
   'br.com.bb.android': 'Banco do Brasil',
@@ -149,6 +150,20 @@ export async function hasBatteryOptimizationExemption(): Promise<boolean> {
   return listener.isIgnoringBatteryOptimizations();
 }
 
+export async function isPixMonitoringEnabled(): Promise<boolean> {
+  if (Platform.OS !== 'android') return false;
+
+  const listener = await loadNotificationListener();
+  return listener.isMonitoringEnabled();
+}
+
+export async function setPixMonitoringEnabled(enabled: boolean): Promise<void> {
+  if (Platform.OS !== 'android') return;
+
+  const listener = await loadNotificationListener();
+  listener.setMonitoringEnabled(enabled);
+}
+
 export async function hasOverlayPermission(): Promise<boolean> {
   if (Platform.OS !== 'android') return true;
 
@@ -201,7 +216,7 @@ export async function subscribeToBankPix(
       PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
     );
     if (notificationPermission !== PermissionsAndroid.RESULTS.GRANTED) {
-      throw new Error('Conceda a permissão de notificações para exibir o aviso persistente do PixFala.');
+      console.log('[PixFala][listener] Permissão de notificação negada; a fala nativa continua ativa.');
     }
   }
 
@@ -229,16 +244,42 @@ export async function subscribeToBankPix(
       if (!receipt) {
         return;
       }
-      try {
-        await showPixReceiptOverlay(receipt.amount, receipt.payer);
-        console.log('[PixFala][listener] Confirmação flutuante exibida', { sourceName });
-      } catch (error) {
-        console.log('[PixFala][listener] Não foi possível exibir a confirmação flutuante', {
-          sourceName,
-          error: error instanceof Error ? error.message : 'Erro desconhecido',
-        });
-      }
 
+      let javascriptSpeechClaimed = false;
+      let canUseJavascriptSpeech = true;
+      let nativeQueueDurable = false;
+      if (notification.key) {
+        try {
+          let speechRoute = nativeListener.claimJavascriptSpeech(
+            notification.key,
+            notification.postTime,
+          );
+          nativeQueueDurable = speechRoute !== 'not-found';
+          if (speechRoute === 'not-found') {
+            nativeQueueDurable = nativeListener.enqueueJavascriptFallback(
+              notification.key,
+              notification.postTime,
+              notification.packageName,
+              receipt.amount,
+              receipt.payer,
+            );
+            speechRoute = nativeListener.claimJavascriptSpeech(
+              notification.key,
+              notification.postTime,
+            );
+            nativeQueueDurable ||= speechRoute !== 'not-found';
+          }
+          javascriptSpeechClaimed = speechRoute === 'claimed';
+          canUseJavascriptSpeech =
+            speechRoute === 'claimed' || speechRoute === 'not-found';
+        } catch (error) {
+          canUseJavascriptSpeech = !nativeQueueDurable;
+          console.warn('[PixFala][listener] Não foi possível selecionar a fala Expo; o TTS nativo seguirá', {
+            ...notificationDetails,
+            error: error instanceof Error ? error.message : 'Erro desconhecido',
+          });
+        }
+      }
       const signature = [
         notification.key || `${notification.packageName}:${notification.id}`,
         notification.title,
@@ -249,6 +290,9 @@ export async function subscribeToBankPix(
       const previousTime = recentNotifications.get(signature);
       if (previousTime && now - previousTime < 60_000) {
         console.log('[PixFala][listener] Notificação ignorada: evento duplicado', notificationDetails);
+        if (javascriptSpeechClaimed && notification.key) {
+          nativeListener.releaseJavascriptSpeech(notification.key, notification.postTime);
+        }
         return;
       }
 
@@ -259,23 +303,6 @@ export async function subscribeToBankPix(
       if (recentNotifications.size > 100) {
         const oldestKey = recentNotifications.keys().next().value;
         if (oldestKey) recentNotifications.delete(oldestKey);
-      }
-
-      try {
-        console.log('[PixFala][listener] Iniciando anúncio TTS', {
-          bankName: sourceName,
-          amount: receipt.amount,
-          payer: receipt.payer,
-        });
-        await falarPix(receipt.amount, receipt.payer);
-        console.log('[PixFala][listener] Anúncio TTS concluído', {
-          bankName: sourceName,
-          amount: receipt.amount,
-        });
-      } catch (error) {
-        console.log('[PixFala][listener] Falha no anúncio de voz', { ...notificationDetails, error });
-        onError(error instanceof Error ? error : new Error('Não foi possível anunciar o Pix recebido.'));
-        return;
       }
 
       try {
@@ -295,14 +322,96 @@ export async function subscribeToBankPix(
           amount: receipt.amount,
           payer: receipt.payer,
         });
-        onReceipt?.(receipt);
+        if (notification.key) {
+          try {
+            nativeListener.confirmPixStored(notification.key, notification.postTime);
+          } catch (error) {
+            console.log('[PixFala][listener] A fala nativa seguirá após o tempo de segurança', {
+              ...notificationDetails,
+              error: error instanceof Error ? error.message : 'Erro desconhecido',
+            });
+          }
+        }
       } catch (error) {
+        recentNotifications.delete(signature);
+        if (javascriptSpeechClaimed && notification.key) {
+          nativeListener.releaseJavascriptSpeech(notification.key, notification.postTime);
+        }
         const detail = error instanceof Error ? error.message : 'Erro desconhecido ao salvar o histórico.';
-        console.log('[PixFala][listener] Falha ao salvar o Pix anunciado', {
+        console.log('[PixFala][listener] Falha ao salvar o Pix recebido', {
           ...notificationDetails,
           error: detail,
         });
-        onError(new Error(`O Pix foi anunciado, mas não foi possível salvar o registro: ${detail}`));
+        onError(new Error(`Não foi possível salvar o Pix no relatório: ${detail}`));
+        return;
+      }
+
+      try {
+        onReceipt?.(receipt);
+      } catch (error) {
+        onError(error instanceof Error ? error : new Error('Não foi possível atualizar o estado do Pix.'));
+      }
+
+      if (canUseJavascriptSpeech) {
+        try {
+          await falarPix(receipt.amount, receipt.payer);
+          if (javascriptSpeechClaimed && notification.key) {
+            const acknowledged = nativeListener.completeJavascriptSpeech(
+              notification.key,
+              notification.postTime,
+            );
+            if (!acknowledged) {
+              console.warn('[PixFala][listener] Voz JS terminou, mas a fila nativa não confirmou o Pix', {
+                ...notificationDetails,
+              });
+            }
+          }
+          console.log('[PixFala][listener] Anúncio de voz concluído pelo Expo Speech', {
+            ...notificationDetails,
+            bankName: sourceName,
+            amount: receipt.amount,
+          });
+          if (!nativeQueueDurable && bankName && notification.key) {
+            try {
+              nativeListener.cancelNotification(notification.key);
+              console.log('[PixFala][listener] Notificação removida após fala concluída sem fila nativa', {
+                ...notificationDetails,
+                bankName,
+              });
+            } catch (cancelError) {
+              console.warn('[PixFala][listener] Não foi possível remover a notificação após a fala', {
+                ...notificationDetails,
+                bankName,
+                error: cancelError instanceof Error ? cancelError.message : 'Erro desconhecido',
+              });
+            }
+          }
+        } catch (error) {
+          if (javascriptSpeechClaimed && notification.key) {
+            nativeListener.releaseJavascriptSpeech(notification.key, notification.postTime);
+          }
+          console.error('[PixFala][listener] Expo Speech falhou; o TTS nativo tentará anunciar', {
+            ...notificationDetails,
+            error,
+          });
+          onError(error instanceof Error ? error : new Error('Não foi possível anunciar o Pix recebido.'));
+        }
+      } else {
+        console.log('[PixFala][listener] O TTS nativo ficou responsável pelo anúncio', {
+          ...notificationDetails,
+          bankName: sourceName,
+          amount: receipt.amount,
+        });
+      }
+
+      try {
+        await showPixReceiptOverlay(receipt.amount, receipt.payer);
+        console.log('[PixFala][listener] Confirmação flutuante exibida', { sourceName });
+      } catch (error) {
+        console.log('[PixFala][listener] Não foi possível exibir a confirmação flutuante', {
+          sourceName,
+          error: error instanceof Error ? error.message : 'Erro desconhecido',
+        });
       }
     })();
   });

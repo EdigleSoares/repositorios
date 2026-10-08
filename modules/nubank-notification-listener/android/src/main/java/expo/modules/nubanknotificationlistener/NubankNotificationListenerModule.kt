@@ -28,6 +28,64 @@ class NubankNotificationListenerModule : Module() {
 
     Events("onNotificationReceived")
 
+    Function("cancelNotification") { key: String ->
+      if (key.isBlank()) {
+        throw IllegalArgumentException("A chave da notificação não pode estar vazia.")
+      }
+      NubankNotificationListenerService.cancelCapturedNotification(key)
+      Unit
+    }
+
+    Function("confirmPixStored") { key: String, postTime: Double ->
+      if (key.isNotBlank()) {
+        NubankNotificationListenerService.confirmPixStored(key, postTime.toLong())
+      }
+      Unit
+    }
+
+    Function("enqueueJavascriptFallback") {
+      key: String,
+      postTime: Double,
+      packageName: String,
+      amount: String,
+      payer: String ->
+      NubankNotificationListenerService.enqueueJavascriptFallback(
+        key,
+        postTime.toLong(),
+        packageName,
+        amount,
+        payer
+      )
+    }
+
+    Function("claimJavascriptSpeech") { key: String, postTime: Double ->
+      if (key.isBlank()) "not-found"
+      else NubankNotificationListenerService.claimJavascriptSpeech(key, postTime.toLong())
+    }
+
+    Function("completeJavascriptSpeech") { key: String, postTime: Double ->
+      if (key.isBlank()) false
+      else NubankNotificationListenerService.completeJavascriptSpeech(key, postTime.toLong())
+    }
+
+    Function("releaseJavascriptSpeech") { key: String, postTime: Double ->
+      if (key.isBlank()) false
+      else NubankNotificationListenerService.releaseJavascriptSpeech(key, postTime.toLong())
+    }
+
+    Function("isMonitoringEnabled") {
+      val context = appContext.reactContext
+        ?: throw IllegalStateException("O contexto Android não está disponível.")
+      PixFalaPreferences.isMonitoringEnabled(context)
+    }
+
+    Function("setMonitoringEnabled") { enabled: Boolean ->
+      val context = appContext.reactContext
+        ?: throw IllegalStateException("O contexto Android não está disponível.")
+      NubankNotificationListenerService.setMonitoringEnabled(context, enabled)
+      Unit
+    }
+
     Function("isNotificationPermissionGranted") {
       val context = appContext.reactContext ?: return@Function false
       val enabledListeners = Settings.Secure.getString(

@@ -7,6 +7,63 @@ import {
   formatarValorPorExtenso,
 } from '@/utils/ttsFormatter';
 
+type SpeechQueueItem = {
+  text: string;
+  resolve: () => void;
+  reject: (error: Error) => void;
+};
+
+const speechQueue: SpeechQueueItem[] = [];
+let isSpeaking = false;
+
+function processarFila(): void {
+  if (isSpeaking) return;
+
+  const nextSpeech = speechQueue.shift();
+  if (!nextSpeech) return;
+
+  isSpeaking = true;
+  let settled = false;
+
+  const finishSpeech = (error?: Error) => {
+    if (settled) return;
+    settled = true;
+    isSpeaking = false;
+
+    if (error) {
+      nextSpeech.reject(error);
+    } else {
+      nextSpeech.resolve();
+    }
+
+    processarFila();
+  };
+
+  try {
+    Speech.speak(nextSpeech.text, {
+      language: 'pt-BR',
+      rate: 0.92,
+      onStart: () => console.log('[PixFala][tts] Expo Speech iniciou o anúncio.'),
+      onDone: () => {
+        console.log('[PixFala][tts] Expo Speech concluiu o anúncio.');
+        finishSpeech();
+      },
+      onStopped: () => {
+        console.warn('[PixFala][tts] Expo Speech foi interrompido.');
+        finishSpeech(new Error('O anúncio de voz foi interrompido.'));
+      },
+      onError: (error) => {
+        console.error('[PixFala][tts] Expo Speech reportou falha.', error);
+        finishSpeech(error);
+      },
+    });
+  } catch (error) {
+    finishSpeech(
+      error instanceof Error ? error : new Error('Não foi possível iniciar o anúncio de voz.'),
+    );
+  }
+}
+
 export function falarPix(valor?: string, pagador?: string): Promise<void> {
   const valorFormatado = valor === undefined ? null : formatarValorMonetario(valor);
   if (valor !== undefined && !valorFormatado) {
@@ -25,13 +82,12 @@ export function falarPix(valor?: string, pagador?: string): Promise<void> {
     voiceName ? ` de ${voiceName}` : ''
   }. ${thankYou}!`;
 
-  return new Promise((resolve, reject) => {
-    Speech.speak(text, {
-      language: 'pt-BR',
-      rate: 0.92,
-      onDone: resolve,
-      onStopped: () => reject(new Error('O anúncio de voz foi interrompido.')),
-      onError: reject,
+  return new Promise<void>((resolve, reject) => {
+    speechQueue.push({
+      text,
+      resolve,
+      reject: (error) => reject(error),
     });
+    processarFila();
   });
 }

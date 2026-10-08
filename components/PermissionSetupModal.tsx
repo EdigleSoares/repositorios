@@ -71,7 +71,8 @@ export function PermissionSetupModal({
           </View>
           <Text style={styles.title}>Configure o PixFala</Text>
           <Text style={styles.description}>
-            Conceda as permissões abaixo. A escuta só será iniciada depois que o Android confirmar todas.
+            Conceda as permissões recomendadas. O acesso às notificações habilita a leitura; sobreposição e
+            bateria sem restrições ajudam a manter a experiência em segundo plano.
           </Text>
 
           <View style={styles.steps}>

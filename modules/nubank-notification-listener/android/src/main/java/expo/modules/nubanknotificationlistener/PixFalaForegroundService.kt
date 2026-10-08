@@ -54,6 +54,7 @@ class PixFalaForegroundService : Service() {
       .setOngoing(true)
       .setOnlyAlertOnce(true)
       .build()
+      .apply { flags = flags or Notification.FLAG_NO_CLEAR }
   }
 
   companion object {
