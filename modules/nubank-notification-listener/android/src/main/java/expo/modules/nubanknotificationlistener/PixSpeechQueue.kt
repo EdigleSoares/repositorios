@@ -1,6 +1,9 @@
 package expo.modules.nubanknotificationlistener
 
 import android.content.Context
+import android.content.pm.ApplicationInfo
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -10,6 +13,7 @@ import android.service.notification.StatusBarNotification
 import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
+import java.security.MessageDigest
 import java.text.Normalizer
 import java.util.Locale
 import java.util.UUID
@@ -24,8 +28,15 @@ private data class PixSpeechItem(
   val text: String,
   val signature: String,
   val capturedAt: Long,
-  var stored: Boolean,
-  var javascriptSpeechClaimedAt: Long
+  var speechCompleted: Boolean,
+  var reportStored: Boolean
+)
+
+private data class PixReceiptCandidate(
+  val eventId: String,
+  val sourceText: String,
+  val amount: String,
+  val payer: String
 )
 
 internal class PixSpeechQueue(
@@ -33,6 +44,8 @@ internal class PixSpeechQueue(
   private val onDurablyQueued: (String, String) -> Unit
 ) : TextToSpeech.OnInitListener {
   private val handler = Handler(Looper.getMainLooper())
+  private val debugAudioFeedbackEnabled =
+    (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
   private val preferences = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
   private val queue = mutableListOf<PixSpeechItem>()
   private val handledSignatures = linkedMapOf<String, Long>()
@@ -41,9 +54,20 @@ internal class PixSpeechQueue(
   private var currentItemId: String? = null
   private var retryScheduled = false
   private var speechWatchdog: Runnable? = null
+  private var toneGenerator: ToneGenerator? = null
 
   init {
     loadPersistedState()
+    toneGenerator = if (debugAudioFeedbackEnabled) {
+      try {
+        ToneGenerator(AudioManager.STREAM_NOTIFICATION, ToneGenerator.MAX_VOLUME)
+      } catch (error: RuntimeException) {
+        Log.e(TAG, "Não foi possível preparar o sinal sonoro imediato.", error)
+        null
+      }
+    } else {
+      null
+    }
     initializeTextToSpeech()
   }
 
@@ -68,109 +92,121 @@ internal class PixSpeechQueue(
       }
       initialized = true
       retryScheduled = false
+      Log.i(TAG, "Mecanismo TTS pronto; fila de Pix será processada sem espera pelo JavaScript.")
       processPending()
     }
   }
 
-  fun enqueue(notification: StatusBarNotification): Boolean {
-    if (!PixFalaPreferences.isMonitoringEnabled(context)) return false
+  fun enqueue(
+    notification: StatusBarNotification,
+    title: String,
+    text: String,
+    bigText: String,
+    textLines: List<String>,
+    subText: String,
+    summaryText: String
+  ): List<Map<String, Any>> {
+    if (!PixFalaPreferences.isMonitoringEnabled(context) ||
+      notification.packageName !in BANK_NAMES
+    ) return emptyList()
 
-    val extras = notification.notification.extras
-    val title = extras.getCharSequence(android.app.Notification.EXTRA_TITLE)?.toString().orEmpty()
-    val text = extras.getCharSequence(android.app.Notification.EXTRA_TEXT)?.toString().orEmpty()
-    val bigText = extras.getCharSequence(android.app.Notification.EXTRA_BIG_TEXT)?.toString().orEmpty()
-    val subText = extras.getCharSequence(android.app.Notification.EXTRA_SUB_TEXT)?.toString().orEmpty()
-    val summaryText = extras.getCharSequence(android.app.Notification.EXTRA_SUMMARY_TEXT)?.toString().orEmpty()
     val sourceText = listOf(title, text, bigText, subText, summaryText)
-      .map(String::trim)
+      .map(::normalizeWhitespace)
       .filter(String::isNotEmpty)
       .distinct()
       .joinToString(" ")
-    val normalizedText = normalize(sourceText)
+    val receiptCandidates = extractReceiptCandidates(
+      notification.key,
+      notification.postTime,
+      notification.packageName,
+      title,
+      sourceText,
+      textLines
+    )
+    if (receiptCandidates.isEmpty()) return emptyList()
 
-    if (OUTGOING_PATTERN.containsMatchIn(normalizedText) ||
-      !INCOMING_PATTERN.containsMatchIn(normalizedText)
-    ) return false
-
-    val amount = AMOUNT_PATTERN.find(sourceText)?.groupValues?.getOrNull(1)
-      ?.let(::normalizeAmount)
-      ?: return false
-    val payer = extractPayer(sourceText)
     val bankName = BANK_NAMES[notification.packageName] ?: notification.packageName
-    val thankYou = THANK_YOU_PHRASES.random()
-    val speech = "Pix recebido de ${amountInWords(amount)} de $payer. $thankYou"
     val postTime = notification.postTime
-    val signature = "${notification.key}|$postTime|${notification.packageName}|$amount"
-
+    val capturedAt = postTime.takeIf { it > 0L } ?: System.currentTimeMillis()
+    val newItems = mutableListOf<PixSpeechItem>()
+    val createdAtCapture = receiptCandidates.map { candidate ->
+      PixSpeechItem(
+        id = UUID.randomUUID().toString(),
+        notificationKey = notification.key,
+        postTime = postTime,
+        packageName = notification.packageName,
+        amount = candidate.amount,
+        payer = candidate.payer,
+        text = "Pix recebido de ${amountInWords(candidate.amount)} de ${candidate.payer}. ${THANK_YOU_PHRASES.random()}",
+        signature = candidate.eventId,
+        capturedAt = capturedAt,
+        speechCompleted = false,
+        reportStored = false
+      )
+    }
     val durablyQueued = synchronized(queue) {
       pruneHandledSignatures()
-      if (signature in handledSignatures || queue.any { it.signature == signature }) {
-        Log.i(TAG, "Notificação Pix duplicada ignorada: $bankName")
+      createdAtCapture
+        .filterNot { item ->
+          item.signature in handledSignatures || queue.any { queued -> queued.signature == item.signature }
+        }
+        .also(newItems::addAll)
+
+      if (newItems.isEmpty()) return@synchronized true
+
+      queue.addAll(newItems)
+      if (persistState()) {
+        Log.i(TAG, "Pix salvo duravelmente na fila nativa: $bankName; novos eventos: ${newItems.size}.")
         true
       } else {
-        val item = PixSpeechItem(
-          id = UUID.randomUUID().toString(),
-          notificationKey = notification.key,
-          postTime = postTime,
-          packageName = notification.packageName,
-          amount = amount,
-          payer = payer,
-          text = speech,
-          signature = signature,
-          capturedAt = System.currentTimeMillis(),
-          stored = false,
-          javascriptSpeechClaimedAt = 0L
-        )
-        queue.add(item)
-        if (persistQueue()) {
-          Log.i(TAG, "Pix salvo duravelmente na fila nativa: $bankName, R$ $amount, $payer")
-          true
-        } else {
-          queue.remove(item)
-          false
-        }
+        queue.removeAll(newItems.toSet())
+        false
       }
     }
     if (!durablyQueued) {
       Log.e(TAG, "Pix mantido na barra do sistema porque não foi possível persistir a fila nativa.")
-      return false
+      return emptyList()
     }
+
     notifyDurablyQueued(notification.key, notification.packageName)
-    processPending()
-    return true
-  }
-
-  fun confirmStored(notificationKey: String, postTime: Long) {
-    synchronized(queue) {
-      val item = queue.firstOrNull {
-        it.notificationKey == notificationKey && it.postTime == postTime && !it.stored
-      } ?: return
-      item.stored = true
-      if (!persistQueue()) {
-        item.stored = false
-        Log.e(TAG, "A confirmação do relatório não foi persistida; será usada a janela de segurança.")
-        return
-      }
-      Log.i(TAG, "Registro do Pix confirmado; liberando fala nativa.")
+    if (newItems.isNotEmpty()) {
+      playConfirmationTone()
+      processPending()
     }
-    processPending()
+    return receiptCandidates.map { candidate ->
+      mapOf(
+        "packageName" to notification.packageName,
+        "id" to notification.id,
+        "title" to "",
+        "text" to candidate.sourceText,
+        "bigText" to "",
+        "textLines" to listOf(candidate.sourceText),
+        "subText" to "",
+        "summaryText" to "",
+        "postTime" to postTime,
+        "key" to notification.key,
+        "eventId" to candidate.eventId
+      )
+    }
   }
 
-  fun enqueueJavascriptFallback(
+  fun ensurePixSpeechQueued(
+    eventId: String,
     notificationKey: String,
     postTime: Long,
     packageName: String,
     amountText: String,
     payerText: String
   ): Boolean {
-    if (notificationKey.isBlank()) return false
+    if (eventId.isBlank() || notificationKey.isBlank()) return false
     val amount = normalizeAmount(amountText) ?: return false
     val payer = payerText.trim().replace(WHITESPACE_PATTERN, " ")
       .split(' ')
       .take(2)
       .joinToString(" ")
       .ifBlank { "Cliente" }
-    val signature = "$notificationKey|$postTime|$packageName|$amount"
+    val signature = eventId
+    var newlyQueued = false
     val durablyQueued = synchronized(queue) {
       if (signature in handledSignatures || queue.any { it.signature == signature }) {
         true
@@ -184,12 +220,13 @@ internal class PixSpeechQueue(
           payer = payer,
           text = "Pix recebido de ${amountInWords(amount)} de $payer. ${THANK_YOU_PHRASES.random()}",
           signature = signature,
-          capturedAt = System.currentTimeMillis(),
-          stored = false,
-          javascriptSpeechClaimedAt = 0L
+          capturedAt = postTime.takeIf { it > 0L } ?: System.currentTimeMillis(),
+          speechCompleted = false,
+          reportStored = false
         )
         queue.add(item)
-        if (persistQueue()) {
+        if (persistState()) {
+          newlyQueued = true
           true
         } else {
           queue.remove(item)
@@ -198,68 +235,57 @@ internal class PixSpeechQueue(
       }
     }
     if (!durablyQueued) {
-      Log.e(TAG, "Fallback de Pix recusado: não foi possível persistir a fila nativa.")
+      Log.e(TAG, "Pix recusado: não foi possível persistir a fila nativa.")
       return false
     }
-    Log.w(TAG, "Fila nativa de contingência criada a partir do registro JavaScript.")
-    notifyDurablyQueued(notificationKey, packageName)
-    processPending()
-    return true
-  }
-
-  fun claimJavascriptSpeech(notificationKey: String, postTime: Long): String {
-    synchronized(queue) {
-      val item = queue.firstOrNull {
-        it.notificationKey == notificationKey && it.postTime == postTime
-      } ?: return "not-found"
-      if (currentItemId == item.id) return "native-speaking"
-      item.javascriptSpeechClaimedAt = System.currentTimeMillis()
-      if (!persistQueue()) {
-        item.javascriptSpeechClaimedAt = 0L
-        Log.e(TAG, "Não foi possível persistir a reserva da fala Expo; o TTS nativo seguirá.")
-        return "native-fallback"
-      }
-      Log.i(TAG, "A fala JavaScript assumiu o anúncio; o TTS nativo fica como contingência.")
-      return "claimed"
-    }
-  }
-
-  fun completeJavascriptSpeech(notificationKey: String, postTime: Long): Boolean {
-    val item = synchronized(queue) {
-      val matchedItem = queue.firstOrNull {
-        it.notificationKey == notificationKey && it.postTime == postTime &&
-          it.javascriptSpeechClaimedAt > 0L
-      } ?: return false
-      queue.remove(matchedItem)
-      handledSignatures[matchedItem.signature] = System.currentTimeMillis()
-      pruneHandledSignatures()
-      persistQueue()
-      persistHandledSignatures()
-      matchedItem
-    }
-    Log.i(TAG, "Fala JavaScript concluída para Pix de R$ ${item.amount}.")
-    processPending()
-    return true
-  }
-
-  fun releaseJavascriptSpeech(notificationKey: String, postTime: Long): Boolean {
-    val released = synchronized(queue) {
-      val item = queue.firstOrNull {
-        it.notificationKey == notificationKey && it.postTime == postTime &&
-          it.javascriptSpeechClaimedAt > 0L
-      } ?: return false
-      item.javascriptSpeechClaimedAt = 0L
-      if (!persistQueue()) {
-        Log.e(TAG, "Não foi possível persistir a liberação; a reserva expirará automaticamente.")
-        return false
-      }
-      true
-    }
-    if (released) {
-      Log.w(TAG, "A fala JavaScript falhou; transferindo o Pix para o TTS nativo.")
+    if (newlyQueued) {
+      Log.i(TAG, "Pix confirmado na fila nativa de fala.")
+      playConfirmationTone()
+      notifyDurablyQueued(notificationKey, packageName)
       processPending()
     }
-    return released
+    return true
+  }
+
+  fun getPendingPixReports(): List<Map<String, Any>> = synchronized(queue) {
+    queue.filterNot { it.reportStored }.map { item ->
+      mapOf(
+        "eventId" to item.signature,
+        "notificationKey" to item.notificationKey,
+        "postTime" to item.postTime.toDouble(),
+        "packageName" to item.packageName,
+        "amount" to item.amount,
+        "payer" to item.payer
+      )
+    }
+  }
+
+  fun markPixReportStored(eventId: String): Boolean {
+    synchronized(queue) {
+      val item = queue.firstOrNull { it.signature == eventId }
+        ?: return eventId in handledSignatures
+      if (item.reportStored) return true
+
+      item.reportStored = true
+      val removed = item.speechCompleted && queue.remove(item)
+      val handledAt = System.currentTimeMillis()
+      if (removed) {
+        handledSignatures[item.signature] = handledAt
+        pruneHandledSignatures()
+      }
+      if (!persistState()) {
+        item.reportStored = false
+        if (removed) {
+          queue.add(0, item)
+          handledSignatures.remove(item.signature)
+        }
+        Log.e(TAG, "O registro local não foi confirmado na fila durável; será sincronizado novamente.")
+        return false
+      }
+      Log.i(TAG, "Relatório local confirmado para uma entrada Pix pendente.")
+    }
+    processPending()
+    return true
   }
 
   fun setMonitoringEnabled(enabled: Boolean) {
@@ -270,8 +296,16 @@ internal class PixSpeechQueue(
 
     handler.post {
       synchronized(queue) {
-        queue.clear()
-        persistQueue()
+        queue.forEach { it.speechCompleted = true }
+        val completedItems = queue.filter { it.reportStored }
+        queue.removeAll { it.reportStored }
+        completedItems.forEach { handledSignatures[it.signature] = System.currentTimeMillis() }
+        pruneHandledSignatures()
+        if (!persistState()) {
+          queue.addAll(0, completedItems)
+          completedItems.forEach { handledSignatures.remove(it.signature) }
+          Log.e(TAG, "Não foi possível persistir a pausa da fila; entradas pendentes de relatório foram preservadas.")
+        }
       }
       currentItemId = null
       speechWatchdog?.let(handler::removeCallbacks)
@@ -286,28 +320,7 @@ internal class PixSpeechQueue(
         currentItemId != null
       ) return@post
 
-      val item = synchronized(queue) { queue.firstOrNull() } ?: return@post
-      val claimAge = System.currentTimeMillis() - item.javascriptSpeechClaimedAt
-      if (item.javascriptSpeechClaimedAt > 0L && claimAge < JAVASCRIPT_SPEECH_TIMEOUT_MS) {
-        handler.postDelayed(
-          { processPending() },
-          JAVASCRIPT_SPEECH_TIMEOUT_MS - claimAge
-        )
-        return@post
-      }
-      if (item.javascriptSpeechClaimedAt > 0L) {
-        synchronized(queue) {
-          item.javascriptSpeechClaimedAt = 0L
-          persistQueue()
-        }
-        Log.w(TAG, "A fala JavaScript expirou; o TTS nativo assumirá o Pix.")
-      }
-      val fallbackDelay = CAPTURE_STORAGE_GRACE_MS - (System.currentTimeMillis() - item.capturedAt)
-      if (!item.stored && fallbackDelay > 0) {
-        handler.postDelayed({ processPending() }, fallbackDelay)
-        return@post
-      }
-
+      val item = synchronized(queue) { queue.firstOrNull { !it.speechCompleted } } ?: return@post
       speak(item)
     }
   }
@@ -319,7 +332,20 @@ internal class PixSpeechQueue(
     textToSpeech?.stop()
     textToSpeech?.shutdown()
     textToSpeech = null
+    toneGenerator?.release()
+    toneGenerator = null
     initialized = false
+  }
+
+  private fun playConfirmationTone() {
+    if (!debugAudioFeedbackEnabled) return
+
+    val played = toneGenerator?.startTone(ToneGenerator.TONE_PROP_ACK, CONFIRMATION_TONE_DURATION_MS)
+    if (played != true) {
+      Log.w(TAG, "O sinal sonoro imediato não pôde ser iniciado; a fala TTS continuará.")
+    } else {
+      Log.i(TAG, "Sinal sonoro imediato enviado ao sistema de áudio.")
+    }
   }
 
   private fun speak(item: PixSpeechItem) {
@@ -338,7 +364,12 @@ internal class PixSpeechQueue(
     speechWatchdog = watchdog
     handler.postDelayed(watchdog, SPEECH_WATCHDOG_MS)
     engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-      override fun onStart(utteranceId: String?) = Unit
+      override fun onStart(utteranceId: String?) {
+        if (utteranceId == item.id) {
+          val latencyMs = (System.currentTimeMillis() - item.capturedAt).coerceAtLeast(0L)
+          Log.i(TAG, "TTS iniciou; captura até início: ${latencyMs}ms.")
+        }
+      }
 
       override fun onDone(utteranceId: String?) {
         handler.post {
@@ -372,6 +403,8 @@ internal class PixSpeechQueue(
       }
     })
 
+    val dispatchLatencyMs = (System.currentTimeMillis() - item.capturedAt).coerceAtLeast(0L)
+    Log.i(TAG, "Enviando confirmação ao TTS; captura até envio: ${dispatchLatencyMs}ms.")
     val result = engine.speak(item.text, TextToSpeech.QUEUE_FLUSH, Bundle(), item.id)
     if (result == TextToSpeech.ERROR) {
       Log.e(TAG, "O Android recusou a fala; o Pix continuará na fila.")
@@ -381,16 +414,24 @@ internal class PixSpeechQueue(
 
   private fun complete(item: PixSpeechItem) {
     if (currentItemId != item.id) return
-    Log.i(TAG, "Anúncio de voz concluído para Pix de R$ ${item.amount}.")
+    Log.i(TAG, "Anúncio de voz concluído.")
     currentItemId = null
     speechWatchdog?.let(handler::removeCallbacks)
     speechWatchdog = null
     synchronized(queue) {
-      queue.removeAll { it.id == item.id }
-      handledSignatures[item.signature] = System.currentTimeMillis()
-      pruneHandledSignatures()
-      persistQueue()
-      persistHandledSignatures()
+      item.speechCompleted = true
+      val removed = item.reportStored && queue.remove(item)
+      if (removed) {
+        handledSignatures[item.signature] = System.currentTimeMillis()
+        pruneHandledSignatures()
+      }
+      if (!persistState()) {
+        if (removed) {
+          queue.add(0, item)
+          handledSignatures.remove(item.signature)
+        }
+        Log.e(TAG, "A conclusão da fala não foi persistida; a entrada foi mantida no diário local.")
+      }
     }
     processPending()
   }
@@ -442,8 +483,8 @@ internal class PixSpeechQueue(
             text = item.getString("text"),
             signature = item.getString("signature"),
             capturedAt = item.getLong("capturedAt"),
-            stored = item.optBoolean("stored", false),
-            javascriptSpeechClaimedAt = 0L
+            speechCompleted = item.optBoolean("speechCompleted", false),
+            reportStored = item.optBoolean("reportStored", false)
           )
         )
       }
@@ -459,7 +500,7 @@ internal class PixSpeechQueue(
     }
   }
 
-  private fun persistQueue(): Boolean {
+  private fun persistState(): Boolean {
     val savedQueue = JSONArray()
     queue.forEach { item ->
       savedQueue.put(
@@ -473,11 +514,23 @@ internal class PixSpeechQueue(
           .put("text", item.text)
           .put("signature", item.signature)
           .put("capturedAt", item.capturedAt)
-          .put("stored", item.stored)
+          .put("speechCompleted", item.speechCompleted)
+          .put("reportStored", item.reportStored)
+      )
+    }
+    val savedSignatures = JSONArray()
+    handledSignatures.forEach { (signature, timestamp) ->
+      savedSignatures.put(
+        JSONObject()
+          .put("signature", signature)
+          .put("timestamp", timestamp)
       )
     }
     return try {
-      val persisted = preferences.edit().putString(KEY_QUEUE, savedQueue.toString()).commit()
+      val persisted = preferences.edit()
+        .putString(KEY_QUEUE, savedQueue.toString())
+        .putString(KEY_HANDLED, savedSignatures.toString())
+        .commit()
       if (!persisted) {
         Log.e(TAG, "O Android não confirmou a gravação persistente da fila de voz.")
       }
@@ -493,20 +546,6 @@ internal class PixSpeechQueue(
       onDurablyQueued(notificationKey, packageName)
     } catch (error: RuntimeException) {
       Log.e(TAG, "Pix salvo na fila, mas não foi possível limpar a notificação do banco.", error)
-    }
-  }
-
-  private fun persistHandledSignatures() {
-    val savedSignatures = JSONArray()
-    handledSignatures.forEach { (signature, timestamp) ->
-      savedSignatures.put(
-        JSONObject()
-          .put("signature", signature)
-          .put("timestamp", timestamp)
-      )
-    }
-    if (!preferences.edit().putString(KEY_HANDLED, savedSignatures.toString()).commit()) {
-      Log.e(TAG, "O Android não confirmou a gravação da proteção contra Pix duplicado.")
     }
   }
 
@@ -533,6 +572,98 @@ internal class PixSpeechQueue(
     Normalizer.normalize(value, Normalizer.Form.NFD)
       .replace(DIACRITICS_PATTERN, "")
       .lowercase(Locale("pt", "BR"))
+
+  private fun normalizeWhitespace(value: String): String =
+    value.replace(NON_BREAKING_SPACES_PATTERN, " ")
+      .replace(WHITESPACE_PATTERN, " ")
+      .trim()
+
+  private fun extractReceiptCandidates(
+    notificationKey: String,
+    postTime: Long,
+    packageName: String,
+    title: String,
+    sourceText: String,
+    textLines: List<String>
+  ): List<PixReceiptCandidate> {
+    val identicalLineOccurrences = mutableMapOf<String, Int>()
+    val lineCandidates = textLines.mapNotNull { line ->
+      val candidateText = normalizeWhitespace("$title $line")
+      val identityText = normalizeWhitespace(line)
+      val occurrence = identicalLineOccurrences.getOrDefault(identityText, 0)
+      identicalLineOccurrences[identityText] = occurrence + 1
+      parseReceiptCandidate(notificationKey, 0L, packageName, candidateText, occurrence, identityText)
+    }
+    if (lineCandidates.isNotEmpty()) return lineCandidates
+
+    val candidateText = normalizeWhitespace(sourceText)
+    return listOfNotNull(
+      parseReceiptCandidate(notificationKey, postTime, packageName, candidateText, 0)
+    )
+  }
+
+  private fun parseReceiptCandidate(
+    notificationKey: String,
+    postTime: Long,
+    packageName: String,
+    sourceText: String,
+    eventIndex: Int,
+    identityText: String = sourceText
+  ): PixReceiptCandidate? {
+    val normalizedText = normalize(sourceText)
+    if (OUTGOING_PATTERN.containsMatchIn(normalizedText) ||
+      !INCOMING_PATTERN.containsMatchIn(normalizedText) ||
+      (!EXPLICIT_PIX_PATTERN.containsMatchIn(normalizedText) &&
+        !TRANSFER_RECEIVED_PATTERN.containsMatchIn(normalizedText))
+    ) return null
+
+    val amount = AMOUNT_PATTERN.find(sourceText)?.groupValues?.getOrNull(1)
+      ?.trimEnd('.', ',')
+      ?.let(::normalizeAmount)
+      ?: return null
+    val payer = extractPayer(sourceText)
+    return PixReceiptCandidate(
+      eventId = createPixEventId(
+        notificationKey,
+        postTime,
+        packageName,
+        eventIndex,
+        amount,
+        payer,
+        normalizeWhitespace(normalize(identityText))
+      ),
+      sourceText = sourceText,
+      amount = amount,
+      payer = payer
+    )
+  }
+
+  private fun createPixEventId(
+    notificationKey: String,
+    postTime: Long,
+    packageName: String,
+    eventIndex: Int,
+    amount: String,
+    payer: String,
+    normalizedSourceText: String
+  ): String {
+    val identity = listOf(
+      notificationKey,
+      postTime.toString(),
+      packageName,
+      eventIndex.toString(),
+      amount,
+      payer,
+      normalizedSourceText
+    ).joinToString("\u001f")
+    val digest = MessageDigest.getInstance("SHA-256").digest(identity.toByteArray(Charsets.UTF_8))
+    val hexDigits = "0123456789abcdef"
+    val eventHash = digest.take(16).joinToString("") { byte ->
+      val value = byte.toInt() and 0xff
+      "${hexDigits[value ushr 4]}${hexDigits[value and 0x0f]}"
+    }
+    return "pix-$eventHash"
+  }
 
   private fun amountInWords(amount: String): String {
     val reais = amount.substringBefore(',').replace(".", "").toLongOrNull()
@@ -628,10 +759,9 @@ internal class PixSpeechQueue(
     private const val PREFERENCES_NAME = "pixfala_native_monitoring"
     private const val KEY_QUEUE = "speech_queue"
     private const val KEY_HANDLED = "handled_signatures"
-    private const val CAPTURE_STORAGE_GRACE_MS = 2_500L
+    private const val CONFIRMATION_TONE_DURATION_MS = 250
     private const val SPEECH_RETRY_DELAY_MS = 15_000L
     private const val SPEECH_WATCHDOG_MS = 45_000L
-    private const val JAVASCRIPT_SPEECH_TIMEOUT_MS = 45_000L
     private const val HANDLED_SIGNATURE_RETENTION_MS = 24 * 60 * 60 * 1000L
     private const val MAX_HANDLED_SIGNATURES = 200
     private val SMALL_NUMBERS =
@@ -655,10 +785,14 @@ internal class PixSpeechQueue(
     )
     private val DIACRITICS_PATTERN = "\\p{Mn}+".toRegex()
     private val WHITESPACE_PATTERN = "\\s+".toRegex()
+    private val NON_BREAKING_SPACES_PATTERN = "[\\u00A0\\u2007\\u202F]".toRegex()
     private val OUTGOING_PATTERN =
       Regex("""\b(enviado|enviada|enviou|realizada|efetuado|agendado|comprovante|fatura|compra|cartao|saque|investimento)\w*\b""")
     private val INCOMING_PATTERN =
       Regex("""\b(pix\s+recebido|recebeu|recebido|recebida|recebemos|credito\s+recebido|transferencia\s+(pix\s+)?recebida|voce\s+recebeu)\b""")
+    private val EXPLICIT_PIX_PATTERN = Regex("""\bpix\b""")
+    private val TRANSFER_RECEIVED_PATTERN =
+      Regex("""\btransferencia\s+(pix\s+)?recebida\b""")
     private val AMOUNT_PATTERN = Regex("""R\$\s*([\d.,]+)""", RegexOption.IGNORE_CASE)
     private val CPF_PATTERN =
       Regex("""(?:\d{3}\.\d{3}\.\d{3}-\d{2}|\*{3}\.\d{3}\.\d{3}-\*{2})""")
@@ -669,6 +803,7 @@ internal class PixSpeechQueue(
     private val BANK_NAMES = mapOf(
       "com.nu.production" to "Nubank",
       "com.bmg.banco.mobile" to "BMG",
+      "br.com.bancobmg.bancodigital" to "BMG",
       "com.neon" to "Neon",
       "com.c6bank.app" to "C6 Bank",
       "br.com.bb.android" to "Banco do Brasil",

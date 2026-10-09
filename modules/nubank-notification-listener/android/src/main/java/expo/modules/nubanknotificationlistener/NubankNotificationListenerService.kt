@@ -29,22 +29,38 @@ class NubankNotificationListenerService : NotificationListenerService() {
 
   override fun onNotificationPosted(statusBarNotification: StatusBarNotification) {
     val extras = statusBarNotification.notification.extras
-    if (::speechQueue.isInitialized) {
-      speechQueue.enqueue(statusBarNotification)
+    val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
+    val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
+    val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString().orEmpty()
+    val textLines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
+      ?.map { it.toString() }
+      .orEmpty()
+    val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString().orEmpty()
+    val summaryText = extras.getCharSequence(Notification.EXTRA_SUMMARY_TEXT)?.toString().orEmpty()
+    val capturedEvents = if (::speechQueue.isInitialized) {
+      speechQueue.enqueue(statusBarNotification, title, text, bigText, textLines, subText, summaryText)
+    } else {
+      emptyList()
     }
-    NubankNotificationListenerModule.dispatchNotification(
-      mapOf(
-        "packageName" to statusBarNotification.packageName,
-        "id" to statusBarNotification.id,
-        "title" to extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty(),
-        "text" to extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty(),
-        "bigText" to extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString().orEmpty(),
-        "subText" to extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString().orEmpty(),
-        "summaryText" to extras.getCharSequence(Notification.EXTRA_SUMMARY_TEXT)?.toString().orEmpty(),
-        "postTime" to statusBarNotification.postTime,
-        "key" to statusBarNotification.key
+
+    if (capturedEvents.isNotEmpty()) {
+      capturedEvents.forEach { NubankNotificationListenerModule.dispatchNotification(it) }
+    } else {
+      NubankNotificationListenerModule.dispatchNotification(
+        mapOf(
+          "packageName" to statusBarNotification.packageName,
+          "id" to statusBarNotification.id,
+          "title" to title,
+          "text" to text,
+          "bigText" to bigText,
+          "textLines" to textLines,
+          "subText" to subText,
+          "summaryText" to summaryText,
+          "postTime" to statusBarNotification.postTime,
+          "key" to statusBarNotification.key
+        )
       )
-    )
+    }
   }
 
   override fun onDestroy() {
@@ -93,17 +109,15 @@ class NubankNotificationListenerService : NotificationListenerService() {
       listener.cancelNotification(key)
     }
 
-    fun confirmPixStored(key: String, postTime: Long) {
-      activeListener?.speechQueue?.confirmStored(key, postTime)
-    }
-
-    fun enqueueJavascriptFallback(
+    fun ensurePixSpeechQueued(
+      eventId: String,
       key: String,
       postTime: Long,
       packageName: String,
       amount: String,
       payer: String
-    ): Boolean = activeListener?.speechQueue?.enqueueJavascriptFallback(
+    ): Boolean = activeListener?.speechQueue?.ensurePixSpeechQueued(
+      eventId,
       key,
       postTime,
       packageName,
@@ -111,14 +125,11 @@ class NubankNotificationListenerService : NotificationListenerService() {
       payer
     ) ?: false
 
-    fun claimJavascriptSpeech(key: String, postTime: Long): String =
-      activeListener?.speechQueue?.claimJavascriptSpeech(key, postTime) ?: "not-found"
+    fun getPendingPixReports(): List<Map<String, Any>> =
+      activeListener?.speechQueue?.getPendingPixReports() ?: emptyList()
 
-    fun completeJavascriptSpeech(key: String, postTime: Long): Boolean =
-      activeListener?.speechQueue?.completeJavascriptSpeech(key, postTime) ?: false
-
-    fun releaseJavascriptSpeech(key: String, postTime: Long): Boolean =
-      activeListener?.speechQueue?.releaseJavascriptSpeech(key, postTime) ?: false
+    fun markPixReportStored(eventId: String): Boolean =
+      activeListener?.speechQueue?.markPixReportStored(eventId) ?: false
 
     fun setMonitoringEnabled(context: android.content.Context, enabled: Boolean) {
       if (!PixFalaPreferences.setMonitoringEnabled(context, enabled)) {

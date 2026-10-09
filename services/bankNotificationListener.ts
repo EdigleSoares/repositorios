@@ -1,6 +1,10 @@
 import { PermissionsAndroid, Platform } from 'react-native';
 
-import type { BankNotificationData } from '@/modules/nubank-notification-listener/src/NubankNotificationListener.types';
+import type {
+  BankNotificationData,
+  PendingPixReport,
+} from '@/modules/nubank-notification-listener/src/NubankNotificationListener.types';
+import { SUPPORTED_BANK_PACKAGES } from '@/constants/banks';
 import { formatarNomePagador, formatarValorMonetario } from '@/utils/pixFormatter';
 import { savePixRecord } from '@/services/pixStorage';
 import { falarPix } from '@/services/ttsService';
@@ -35,6 +39,9 @@ const OUTGOING_PATTERN =
   /\b(?:enviado|enviada|enviou|realizada|efetuado|agendado|comprovante|fatura|compra|cartao|saque|investimento)\w*\b/iu;
 const INCOMING_PATTERN =
   /\b(?:pix\s+recebido|recebeu|recebido|recebida|recebemos|credito\s+recebido|transferencia\s+(?:pix\s+)?recebida|voce\s+recebeu)\b/iu;
+const EXPLICIT_PIX_PATTERN = /\bpix\b/iu;
+const TRANSFER_RECEIVED_PATTERN =
+  /\btransferencia\s+(?:pix\s+)?recebida\b|\brecebemos sua transferencia\b|\bvoce recebeu uma transferencia\b/iu;
 const AMOUNT_PATTERN = /R\$\s*([\d.,]+)/iu;
 const PAYER_PATTERN =
   /\bde\s+(?!R\s*\$)([\p{L}\p{M}][\p{L}\p{M} .'’-]{0,79}?)(?=\s+(?:CPF\b|no\s+valor\b|chave\b|no\s+R\s*\$)|[.!?;]|$)/iu;
@@ -51,12 +58,20 @@ function parsePixNotification(
   notification: BankNotificationData,
   bankName: string,
 ): (BankPixReceipt & { rawText: string }) | null {
-  const rawText = [notification.title, notification.text, notification.bigText]
+  const rawText = [
+    notification.title,
+    notification.text,
+    notification.bigText,
+    ...(notification.textLines ?? []),
+  ]
     .map((value) => value.trim())
     .filter(Boolean)
     .filter((value, index, values) => values.indexOf(value) === index)
     .join('\n');
   const searchableTexts = [
+    ...(notification.textLines ?? []).map((line) => `${notification.title} ${line}`),
+    `${notification.title} ${notification.text}`,
+    `${notification.title} ${notification.bigText}`,
     notification.text,
     notification.bigText,
     notification.title,
@@ -65,38 +80,33 @@ function parsePixNotification(
   ]
     .map((value) => value.replace(/\s+/gu, ' ').trim())
     .filter((value, index, texts) => value.length > 0 && texts.indexOf(value) === index);
-  const combinedText = searchableTexts.join(' ');
-  const normalizedText = normalizeNotificationText(combinedText);
 
   console.log('[PixFala][listener] Verificando notificação', {
     packageName: notification.packageName,
     bankName,
   });
-  if (OUTGOING_PATTERN.test(normalizedText)) {
-    console.log('[PixFala][listener] Descartada: padrão de saída/pagamento detectado', { bankName });
-    return null;
-  }
-  if (!INCOMING_PATTERN.test(normalizedText)) {
+  const receiptText = searchableTexts.find((text) => {
+    const normalizedText = normalizeNotificationText(text);
+    if (OUTGOING_PATTERN.test(normalizedText) || !INCOMING_PATTERN.test(normalizedText)) return false;
+    return EXPLICIT_PIX_PATTERN.test(normalizedText) ||
+      TRANSFER_RECEIVED_PATTERN.test(normalizedText);
+  });
+  if (!receiptText) {
     console.log('[PixFala][listener] Descartada: nenhum padrão de recebimento detectado', { bankName });
     return null;
   }
 
   console.log('[PixFala][listener] Padrão de recebimento confirmado', { bankName });
 
-  const amountText = searchableTexts
-    .map((text) => text.match(AMOUNT_PATTERN)?.[1])
-    .find((value) => value !== undefined)
-    ?.replace(/[.,]+$/u, '');
+  const amountText = receiptText.match(AMOUNT_PATTERN)?.[1]?.replace(/[.,]+$/u, '');
   const amount = amountText ? formatarValorMonetario(amountText) : null;
   if (!amount) {
     console.log('[PixFala][listener] Descartada: valor ausente ou inválido', { bankName });
     return null;
   }
-  console.log('[PixFala][listener] Valor extraído', { bankName, amount });
+  console.log('[PixFala][listener] Valor válido extraído', { bankName });
 
-  const payerText = searchableTexts
-    .map((text) => text.replace(CPF_PATTERN, ' ').match(PAYER_PATTERN)?.[1])
-    .find((value) => value !== undefined);
+  const payerText = receiptText.replace(CPF_PATTERN, ' ').match(PAYER_PATTERN)?.[1];
   const payer = payerText ? formatarNomePagador(payerText) : null;
   const fullPayerName = payer ?? 'Cliente';
   console.log('[PixFala][listener] Nome do pagador extraído', { bankName, hasPayer: payer !== null });
@@ -124,6 +134,95 @@ async function loadNotificationListener() {
       throw new NotificationListenerUnavailableError(error);
     }
     throw error;
+  }
+}
+
+type NativeNotificationListener = Awaited<ReturnType<typeof loadNotificationListener>>;
+
+function getPixRecordId(
+  eventId: string,
+  notificationKey?: string,
+  postTime?: number,
+  packageName?: string,
+): string {
+  if (!eventId.startsWith('pix-') && notificationKey && packageName && postTime !== undefined) {
+    return `notification:${encodeURIComponent(packageName)}:${postTime}:${encodeURIComponent(notificationKey)}`;
+  }
+  return `notification:${encodeURIComponent(eventId)}`;
+}
+
+function createPixEventId(
+  notificationKey: string,
+  postTime: number,
+  packageName: string,
+  amount: string,
+  payer: string,
+): string {
+  return [
+    'pix-js',
+    encodeURIComponent(notificationKey),
+    String(postTime),
+    encodeURIComponent(packageName),
+    encodeURIComponent(amount),
+    encodeURIComponent(payer),
+  ].join(':');
+}
+
+async function persistPendingPixReport(report: PendingPixReport): Promise<void> {
+  const bankName = BANK_PACKAGE_NAMES[report.packageName] ?? 'Banco não identificado';
+  await savePixRecord({
+    id: getPixRecordId(
+      report.eventId,
+      report.notificationKey,
+      report.postTime,
+      report.packageName,
+    ),
+    valor: report.amount,
+    nomePagador: report.payer,
+    banco: bankName,
+    timestamp: Number.isFinite(report.postTime) && report.postTime > 0
+      ? new Date(report.postTime).toISOString()
+      : new Date().toISOString(),
+    packageName: report.packageName,
+  });
+}
+
+async function syncPendingPixReports(
+  nativeListener: NativeNotificationListener,
+  onError: (error: Error) => void,
+): Promise<void> {
+  let pendingReports: PendingPixReport[];
+  try {
+    pendingReports = nativeListener.getPendingPixReports();
+  } catch (error) {
+    onError(error instanceof Error
+      ? new Error(`Não foi possível recuperar Pix pendentes do diário local: ${error.message}`)
+      : new Error('Não foi possível recuperar Pix pendentes do diário local.'));
+    return;
+  }
+
+  let syncedCount = 0;
+  let failedCount = 0;
+  for (const report of pendingReports) {
+    try {
+      await persistPendingPixReport(report);
+      if (!nativeListener.markPixReportStored(report.eventId)) {
+        throw new Error('O diário local não confirmou o registro no relatório.');
+      }
+      syncedCount += 1;
+    } catch (error) {
+      failedCount += 1;
+      onError(error instanceof Error
+        ? new Error(`Não foi possível sincronizar um Pix pendente: ${error.message}`)
+        : new Error('Não foi possível sincronizar um Pix pendente.'));
+    }
+  }
+
+  if (pendingReports.length > 0) {
+    console.log('[PixFala][listener] Sincronização do diário local finalizada', {
+      syncedCount,
+      failedCount,
+    });
   }
 }
 
@@ -219,9 +318,8 @@ export async function subscribeToBankPix(
       console.log('[PixFala][listener] Permissão de notificação negada; a fala nativa continua ativa.');
     }
   }
-
   nativeListener.startForegroundTracking();
-  const recentNotifications = new Map<string, number>();
+  const recentEventIds = new Map<string, number>();
 
   const subscription = nativeListener.addListener('onNotificationReceived', (notification: BankNotificationData) => {
     const notificationDetails = {
@@ -242,74 +340,63 @@ export async function subscribeToBankPix(
 
       const receipt = parsePixNotification(notification, sourceName);
       if (!receipt) {
+        if (SUPPORTED_BANK_PACKAGES.has(notification.packageName)) {
+          void syncPendingPixReports(nativeListener, onError);
+        }
         return;
       }
 
-      let javascriptSpeechClaimed = false;
-      let canUseJavascriptSpeech = true;
+      const eventId = notification.eventId ?? createPixEventId(
+        notification.key,
+        notification.postTime,
+        notification.packageName,
+        receipt.amount,
+        receipt.payer,
+      );
+      const now = Date.now();
+      const previousTime = recentEventIds.get(eventId);
+      if (previousTime && now - previousTime < 60_000) {
+        console.log('[PixFala][listener] Notificação ignorada: evento duplicado', notificationDetails);
+        return;
+      }
+
+      recentEventIds.set(eventId, now);
+      for (const [key, timestamp] of recentEventIds) {
+        if (now - timestamp >= 60_000) recentEventIds.delete(key);
+      }
+      if (recentEventIds.size > 100) {
+        const oldestKey = recentEventIds.keys().next().value;
+        if (oldestKey) recentEventIds.delete(oldestKey);
+      }
+
       let nativeQueueDurable = false;
       if (notification.key) {
         try {
-          let speechRoute = nativeListener.claimJavascriptSpeech(
+          nativeQueueDurable = nativeListener.ensurePixSpeechQueued(
+            eventId,
             notification.key,
             notification.postTime,
+            notification.packageName,
+            receipt.amount,
+            receipt.payer,
           );
-          nativeQueueDurable = speechRoute !== 'not-found';
-          if (speechRoute === 'not-found') {
-            nativeQueueDurable = nativeListener.enqueueJavascriptFallback(
-              notification.key,
-              notification.postTime,
-              notification.packageName,
-              receipt.amount,
-              receipt.payer,
-            );
-            speechRoute = nativeListener.claimJavascriptSpeech(
-              notification.key,
-              notification.postTime,
-            );
-            nativeQueueDurable ||= speechRoute !== 'not-found';
-          }
-          javascriptSpeechClaimed = speechRoute === 'claimed';
-          canUseJavascriptSpeech =
-            speechRoute === 'claimed' || speechRoute === 'not-found';
         } catch (error) {
-          canUseJavascriptSpeech = !nativeQueueDurable;
-          console.warn('[PixFala][listener] Não foi possível selecionar a fala Expo; o TTS nativo seguirá', {
+          console.warn('[PixFala][listener] Não foi possível confirmar a fila nativa; o Expo Speech será usado', {
             ...notificationDetails,
             error: error instanceof Error ? error.message : 'Erro desconhecido',
           });
         }
       }
-      const signature = [
-        notification.key || `${notification.packageName}:${notification.id}`,
-        notification.title,
-        notification.text,
-        notification.bigText,
-      ].join('|');
-      const now = Date.now();
-      const previousTime = recentNotifications.get(signature);
-      if (previousTime && now - previousTime < 60_000) {
-        console.log('[PixFala][listener] Notificação ignorada: evento duplicado', notificationDetails);
-        if (javascriptSpeechClaimed && notification.key) {
-          nativeListener.releaseJavascriptSpeech(notification.key, notification.postTime);
-        }
-        return;
-      }
 
-      recentNotifications.set(signature, now);
-      for (const [key, timestamp] of recentNotifications) {
-        if (now - timestamp >= 60_000) recentNotifications.delete(key);
-      }
-      if (recentNotifications.size > 100) {
-        const oldestKey = recentNotifications.keys().next().value;
-        if (oldestKey) recentNotifications.delete(oldestKey);
-      }
-
+      let reportStored = false;
       try {
         const timestamp = Number.isFinite(notification.postTime) && notification.postTime > 0
           ? new Date(notification.postTime).toISOString()
           : new Date().toISOString();
         await savePixRecord({
+          ...(notification.key
+            ? { id: getPixRecordId(eventId) }
+            : {}),
           valor: receipt.amount,
           nomePagador: receipt.payer,
           banco: sourceName,
@@ -319,31 +406,28 @@ export async function subscribeToBankPix(
         });
         console.log('[PixFala][listener] Pix salvo no relatório', {
           bankName,
-          amount: receipt.amount,
-          payer: receipt.payer,
         });
-        if (notification.key) {
-          try {
-            nativeListener.confirmPixStored(notification.key, notification.postTime);
-          } catch (error) {
-            console.log('[PixFala][listener] A fala nativa seguirá após o tempo de segurança', {
-              ...notificationDetails,
-              error: error instanceof Error ? error.message : 'Erro desconhecido',
-            });
-          }
-        }
+        reportStored = true;
       } catch (error) {
-        recentNotifications.delete(signature);
-        if (javascriptSpeechClaimed && notification.key) {
-          nativeListener.releaseJavascriptSpeech(notification.key, notification.postTime);
-        }
+        recentEventIds.delete(eventId);
         const detail = error instanceof Error ? error.message : 'Erro desconhecido ao salvar o histórico.';
         console.log('[PixFala][listener] Falha ao salvar o Pix recebido', {
           ...notificationDetails,
           error: detail,
         });
         onError(new Error(`Não foi possível salvar o Pix no relatório: ${detail}`));
-        return;
+      }
+
+      if (reportStored && nativeQueueDurable && notification.key) {
+        try {
+          if (!nativeListener.markPixReportStored(eventId)) {
+            throw new Error('O diário local não confirmou o registro no relatório.');
+          }
+        } catch (error) {
+          onError(error instanceof Error
+            ? new Error(`O Pix foi salvo, mas a fila local não confirmou a sincronização: ${error.message}`)
+            : new Error('O Pix foi salvo, mas a fila local não confirmou a sincronização.'));
+        }
       }
 
       try {
@@ -352,26 +436,14 @@ export async function subscribeToBankPix(
         onError(error instanceof Error ? error : new Error('Não foi possível atualizar o estado do Pix.'));
       }
 
-      if (canUseJavascriptSpeech) {
+      if (!nativeQueueDurable) {
         try {
           await falarPix(receipt.amount, receipt.payer);
-          if (javascriptSpeechClaimed && notification.key) {
-            const acknowledged = nativeListener.completeJavascriptSpeech(
-              notification.key,
-              notification.postTime,
-            );
-            if (!acknowledged) {
-              console.warn('[PixFala][listener] Voz JS terminou, mas a fila nativa não confirmou o Pix', {
-                ...notificationDetails,
-              });
-            }
-          }
           console.log('[PixFala][listener] Anúncio de voz concluído pelo Expo Speech', {
             ...notificationDetails,
             bankName: sourceName,
-            amount: receipt.amount,
           });
-          if (!nativeQueueDurable && bankName && notification.key) {
+          if (reportStored && bankName && notification.key) {
             try {
               nativeListener.cancelNotification(notification.key);
               console.log('[PixFala][listener] Notificação removida após fala concluída sem fila nativa', {
@@ -387,10 +459,7 @@ export async function subscribeToBankPix(
             }
           }
         } catch (error) {
-          if (javascriptSpeechClaimed && notification.key) {
-            nativeListener.releaseJavascriptSpeech(notification.key, notification.postTime);
-          }
-          console.error('[PixFala][listener] Expo Speech falhou; o TTS nativo tentará anunciar', {
+          console.error('[PixFala][listener] Expo Speech falhou; o Pix não pôde ser anunciado', {
             ...notificationDetails,
             error,
           });
@@ -400,7 +469,6 @@ export async function subscribeToBankPix(
         console.log('[PixFala][listener] O TTS nativo ficou responsável pelo anúncio', {
           ...notificationDetails,
           bankName: sourceName,
-          amount: receipt.amount,
         });
       }
 
@@ -415,6 +483,8 @@ export async function subscribeToBankPix(
       }
     })();
   });
+
+  void syncPendingPixReports(nativeListener, onError);
 
   return {
     remove: () => {

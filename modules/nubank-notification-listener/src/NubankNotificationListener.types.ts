@@ -6,33 +6,40 @@ export type BankNotificationData = {
   title: string;
   text: string;
   bigText: string;
+  textLines?: string[];
   subText: string;
   summaryText: string;
   postTime: number;
   key: string;
+  eventId?: string;
 };
 
 export type BankNotificationListenerEvents = {
   onNotificationReceived: (notification: BankNotificationData) => void;
 };
 
+export type PendingPixReport = {
+  eventId: string;
+  notificationKey: string;
+  postTime: number;
+  packageName: string;
+  amount: string;
+  payer: string;
+};
+
 export declare class NubankNotificationListenerModule extends NativeModule<BankNotificationListenerEvents> {
   cancelNotification(key: string): void;
-  confirmPixStored(key: string, postTime: number): void;
-  enqueueJavascriptFallback(
+  ensurePixSpeechQueued(
+    eventId: string,
     key: string,
     postTime: number,
     packageName: string,
     amount: string,
     payer: string,
   ): boolean;
-  claimJavascriptSpeech(
-    key: string,
-    postTime: number,
-  ): 'claimed' | 'native-speaking' | 'native-fallback' | 'not-found';
-  completeJavascriptSpeech(key: string, postTime: number): boolean;
+  getPendingPixReports(): PendingPixReport[];
   isMonitoringEnabled(): boolean;
-  releaseJavascriptSpeech(key: string, postTime: number): boolean;
+  markPixReportStored(eventId: string): boolean;
   setMonitoringEnabled(enabled: boolean): void;
   isNotificationPermissionGranted(): boolean;
   openNotificationListenerSettings(): void;

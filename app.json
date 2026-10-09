@@ -48,11 +48,11 @@
       "typedRoutes": true
     },
     "extra": {
-      "router": {},
       "eas": {
-        "projectId": "ad40c57d-859c-4d02-be82-fe0d1577f0a9"
-      }
+        "projectId": "a99d761c-9373-40ae-87d2-66306672de63"
+      },
+      "router": {}
     },
-    "owner": "marcossoares"
+    "owner": "devmarcossoares"
   }
 }

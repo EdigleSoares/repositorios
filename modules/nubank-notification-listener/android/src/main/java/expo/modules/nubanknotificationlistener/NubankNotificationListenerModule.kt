@@ -36,20 +36,15 @@ class NubankNotificationListenerModule : Module() {
       Unit
     }
 
-    Function("confirmPixStored") { key: String, postTime: Double ->
-      if (key.isNotBlank()) {
-        NubankNotificationListenerService.confirmPixStored(key, postTime.toLong())
-      }
-      Unit
-    }
-
-    Function("enqueueJavascriptFallback") {
+    Function("ensurePixSpeechQueued") {
+      eventId: String,
       key: String,
       postTime: Double,
       packageName: String,
       amount: String,
       payer: String ->
-      NubankNotificationListenerService.enqueueJavascriptFallback(
+      NubankNotificationListenerService.ensurePixSpeechQueued(
+        eventId,
         key,
         postTime.toLong(),
         packageName,
@@ -58,19 +53,13 @@ class NubankNotificationListenerModule : Module() {
       )
     }
 
-    Function("claimJavascriptSpeech") { key: String, postTime: Double ->
-      if (key.isBlank()) "not-found"
-      else NubankNotificationListenerService.claimJavascriptSpeech(key, postTime.toLong())
+    Function("getPendingPixReports") {
+      NubankNotificationListenerService.getPendingPixReports()
     }
 
-    Function("completeJavascriptSpeech") { key: String, postTime: Double ->
-      if (key.isBlank()) false
-      else NubankNotificationListenerService.completeJavascriptSpeech(key, postTime.toLong())
-    }
-
-    Function("releaseJavascriptSpeech") { key: String, postTime: Double ->
-      if (key.isBlank()) false
-      else NubankNotificationListenerService.releaseJavascriptSpeech(key, postTime.toLong())
+    Function("markPixReportStored") { eventId: String ->
+      if (eventId.isBlank()) false
+      else NubankNotificationListenerService.markPixReportStored(eventId)
     }
 
     Function("isMonitoringEnabled") {

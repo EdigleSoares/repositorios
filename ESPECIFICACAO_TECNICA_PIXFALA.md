@@ -15,7 +15,7 @@ PixFala é um aplicativo Android com interface em React Native, Expo e TypeScrip
 | Tema | Dark/grafite com acento neon verde; componentes e cores em `constants/` e `components/` |
 | Captura Android | Módulo Expo local `nubank-notification-listener`, com `NotificationListenerService` |
 | Histórico | AsyncStorage, serializado localmente, com retenção de até 12 meses |
-| Voz | Fluxo híbrido: fila persistente e TTS nativos Android como contingência; `expo-speech` também pode falar quando assume a reserva |
+| Voz | Fila persistente e TTS nativo; beep Android de 250 ms somente em builds debug; `expo-speech` é contingência se a fila nativa não puder ser persistida |
 | QR Pix | `pix-utils` monta/valida BR Code; `react-native-qrcode-svg` renderiza; configuração guardada com `expo-secure-store` |
 | Notificação contínua | Serviço Android em foreground, com notificação `ongoing` e `FLAG_NO_CLEAR` |
 | Permissões | Acesso ao listener, sobreposição e solicitação de isenção de otimização de bateria |
@@ -48,7 +48,7 @@ O escopo inicial foi UI, tema e navegação. O projeto passou a incluir recursos
 ### Módulo Android local
 
 - `modules/nubank-notification-listener/android/src/main/java/expo/modules/nubanknotificationlistener/NubankNotificationListenerService.kt`: recebe notificações Android, passa para a fila nativa e encaminha os campos ao JavaScript.
-- `modules/nubank-notification-listener/android/src/main/java/expo/modules/nubanknotificationlistener/PixSpeechQueue.kt`: fila persistente, parser nativo, controle de reserva JS, TTS Android, temporizadores, retentativas e preferências.
+- `modules/nubank-notification-listener/android/src/main/java/expo/modules/nubanknotificationlistener/PixSpeechQueue.kt`: fila persistente, parser nativo, TTS Android imediato, temporizadores, retentativas e preferências.
 - `modules/nubank-notification-listener/android/src/main/java/expo/modules/nubanknotificationlistener/NubankNotificationListenerModule.kt`: API Expo nativa exposta ao TypeScript, permissões, cancelamento de notificação e overlay.
 - `modules/nubank-notification-listener/android/src/main/java/expo/modules/nubanknotificationlistener/PixFalaForegroundService.kt`: notificação e serviço foreground.
 - `modules/nubank-notification-listener/src/NubankNotificationListener.types.ts`: contrato TypeScript do módulo nativo.
@@ -64,27 +64,29 @@ Android recebe notificação
   │    ├─ verifica monitoramento e padrões de Pix recebido
   │    ├─ extrai valor/pagador e cria assinatura anti-duplicação
   │    ├─ grava item da fala em SharedPreferences via commit() síncrono
+  │    ├─ emite um sinal curto assim que a fila está persistida
   │    ├─ após persistência confirmada, tenta cancelar notificação de banco suportado
-  │    └─ agenda processamento TTS (aguarda confirmação JS ou janela de segurança)
+  │    └─ inicia o TTS nativo assim que o mecanismo está pronto
   └─ emite os campos da notificação ao JavaScript
        ├─ valida recebimento/valor novamente
-       ├─ reserva a fala JS na fila nativa, ou cria item nativo de contingência
-       ├─ salva o Pix no histórico AsyncStorage
-       ├─ confirma à fila nativa que o registro JS terminou
+       ├─ garante um item na fila nativa se o parser nativo não reconheceu a notificação
+       ├─ salva o Pix no histórico AsyncStorage com ID idempotente
+       ├─ confirma ao diário nativo que o relatório local foi salvo
        ├─ dispara callback de UI e tenta exibir overlay
-       └─ fala pelo expo-speech, se a reserva JS foi concedida;
-          caso contrário, a fila nativa é responsável pela fala
+       └─ usa expo-speech somente se não foi possível persistir a fala na fila nativa
 ```
 
-**Ordem efetiva relevante:** o serviço Android tenta persistir a fala e cancelar a notificação antes de o JavaScript terminar a gravação do relatório. A fila nativa só começa a falar após `confirmPixStored()` ou depois da janela de segurança. Portanto, “notificação removida” significa que o anúncio está guardado duravelmente segundo o `commit()` local, não que o relatório JS já foi gravado nem que o áudio já foi ouvido.
+**Ordem efetiva relevante:** o serviço Android persiste a entrada, emite o sinal curto e tenta cancelar a notificação bancária sem esperar o JavaScript. O item fica no diário nativo até que tanto o áudio como a gravação do relatório estejam confirmados; se o JS/AsyncStorage falhar ou o processo fechar, o relatório pendente pode ser sincronizado quando o app voltar. A confirmação visual permanece independente. “Notificação removida” significa que a entrada ficou guardada duravelmente localmente, não que o relatório JS já foi gravado nem que o áudio foi ouvido. Os logs medem envio/início do TTS sem registrar valor ou nome de pagador.
 
-Se o armazenamento JS falhar, o callback reporta erro e a fila nativa não deve ser descartada por isso; após a janela de segurança, ainda pode anunciar. Se a reserva JS for liberada por falha de fala, o processamento nativo poderá assumir. O popup/overlay é uma apresentação independente da fala e não confirma que o cliente pagou: apenas reflete a notificação recebida.
+Se o armazenamento JS falhar, o callback reporta erro, mas o diário nativo retém a entrada até que possa ser sincronizada. A gravação do relatório usa o ID do evento Pix como chave idempotente, permitindo registrar recebimentos distintos mesmo quando chegam agrupados na mesma notificação, sem duplicar uma tentativa repetida. Se a fila nativa não puder ser persistida, o JS tenta anunciar com `expo-speech`; a notificação bancária só é limpa automaticamente se o item nativo ficou durável. O popup/overlay não confirma diretamente a liquidação: reflete a notificação recebida.
 
 ### Deduplicação
 
-- A fila nativa identifica entradas por assinatura que inclui chave da notificação, instante, pacote e valor; mantém assinaturas tratadas por período limitado.
-- O JavaScript usa `recentNotifications` em memória, por até 60 segundos, para evitar duplicação de callbacks durante a execução.
-- São proteções complementares. Não se deve remover nem enfraquecer uma sem analisar como a outra compara notificações que o banco atualiza/republica.
+- A fila nativa usa um ID determinístico por evento, derivado da chave, pacote, texto, valor e pagador. Em notificações agrupadas, mantém o ID da mesma linha estável entre atualizações e distingue linhas idênticas por ocorrência; em notificações simples, inclui o instante do evento.
+- O JavaScript deduplica somente o mesmo `eventId` por até 60 segundos. Não descarta eventos diferentes apenas por terem título/corpo iguais.
+- Notificações com `EXTRA_TEXT_LINES` são examinadas linha a linha; cada Pix reconhecido é persistido e encaminhado ao relatório com seu próprio ID.
+- O reconhecimento aceita recebimentos identificados por “Pix recebido” e por “Transferência recebida” (incluindo “Recebemos sua transferência”), desde que haja indicação de entrada, valor válido e origem em pacote bancário suportado.
+- Eventos repetidos com a mesma chave e instante, sem distinção de conteúdo/linha fornecida pelo app bancário, não podem ser separados com certeza. O PixFala só consegue enfileirar transações que o Android efetivamente entrega ao listener.
 
 ## 4. Migração do módulo de fala: JavaScript para Android
 
@@ -100,32 +102,31 @@ O modelo original executava a leitura com `expo-speech` no runtime JS:
 
 Esse desenho já serializava os anúncios enquanto o runtime JS estava ativo. A fraqueza operacional era depender do ciclo de vida do processo/runtime JavaScript: suspensão, encerramento pelo Android, falha do bridge, erro de inicialização do TTS, callbacks não recebidos ou fila em memória perdida podiam interromper o anúncio. Persistir no relatório também não resolvia isso: o dado podia existir sem que uma fala pendente sobrevivesse ao processo.
 
-O serviço TS e a fila JS **ainda existem**; portanto, a migração não removeu `expo-speech`. O fluxo atual é híbrido, com fila Android persistente e seleção/coordenação que ainda passa pelo JavaScript quando ele está disponível.
+O serviço TS e a fila JS **ainda existem** para contingência; a rota principal não espera o runtime JavaScript. Se a persistência da fila nativa falhar, o JS tenta falar pelo `expo-speech`.
 
 ### O que foi movido para Android
 
 `PixSpeechQueue.kt` introduziu uma fila nativa baseada em `SharedPreferences` e `TextToSpeech` do Android:
 
-- A fila é serializada para JSON e escrita sincronamente com `SharedPreferences.Editor.commit()`.
-- Cada item guarda identificador, chave e hora da notificação, pacote, valor, pagador, texto, assinatura, instante de captura, confirmação de persistência no relatório e instante de reserva JS.
+- A fila e as assinaturas concluídas são serializadas para JSON e gravadas juntas com `SharedPreferences.Editor.commit()`.
+- Cada item guarda identificador, chave e hora da notificação, pacote, valor, pagador, texto, assinatura, instante de captura e estados de fala/relatório.
 - Ao conectar o `NotificationListenerService`, a fila restaura estado e tenta processar pendências.
 - `TextToSpeech` é inicializado em `pt-BR`; se a voz estiver ausente/não suportada, tenta o locale padrão.
 - `UtteranceProgressListener` trata conclusão, erro e interrupção.
+- Um sinal curto em `STREAM_NOTIFICATION` é enviado após a persistência da fila; o TTS de voz continua em sequência e pode começar mais tarde conforme o mecanismo do aparelho.
 - Falha ou timeout encerra a tentativa atual e agenda nova inicialização/tentativa; o item fica pendente enquanto não for concluído.
-- Uma reserva JS evita que o TTS nativo e o Expo falem o mesmo item simultaneamente. Se a reserva expirar ou for liberada após falha, o TTS Android pode assumir.
-- A fila nativa também consegue formar uma fala de contingência com os dados do parser JS quando o parser nativo não reconhece o texto.
+- O TTS nativo é o único mecanismo para itens persistidos na fila. A API `ensurePixSpeechQueued(...)` permite que o JS acrescente à fila uma notificação reconhecida apenas pelo parser TypeScript, evitando fala duplicada.
+- O JS só usa `expo-speech` quando não consegue persistir o item na fila nativa.
+- `getPendingPixReports()` e `markPixReportStored(...)` permitem retomar gravações pendentes; a entrada só é removida após fala e relatório confirmados.
 - O texto atual nos dois mecanismos começa com “Pix recebido de [valor por extenso] de [pagador]” e termina com uma variação curta escolhida aleatoriamente: “Muito obrigado.”, “Obrigado!”, “Um ótimo dia!”, “Volte sempre!” ou “Até logo!”. Os itens persistidos antes desta alteração podem manter o texto antigo até serem processados.
 
 ### Coordenação JS/nativo
 
 O contrato em `NubankNotificationListener.types.ts` expõe operações relevantes:
 
-- `claimJavascriptSpeech(key, postTime)`: retorna `claimed`, `native-speaking`, `native-fallback` ou `not-found`.
-- `enqueueJavascriptFallback(...)`: tenta gravar na fila nativa um item construído com o parser JS.
-- `confirmPixStored(key, postTime)`: confirma que o fluxo JS terminou a gravação do registro.
-- `completeJavascriptSpeech(key, postTime)`: reconhece conclusão do Expo Speech na fila.
-- `releaseJavascriptSpeech(key, postTime)`: devolve a responsabilidade à fila nativa depois de falha JS.
-- `cancelNotification(key)`: rota de cancelamento explícita usada pelo JS apenas se não houver fila nativa confirmada e a fala terminar.
+- `ensurePixSpeechQueued(...)`: garante um item durável na fila nativa, usando os dados do parser JS quando necessário.
+- `getPendingPixReports()` / `markPixReportStored(eventId)`: sincroniza o relatório local a partir do diário nativo e confirma a gravação idempotente por evento Pix.
+- `cancelNotification(key)`: rota de cancelamento explícita usada pelo JS se a fila nativa não puder ser persistida e a fala Expo terminar.
 
 `services/ttsService.ts` mantém sua própria fila sequencial em memória: `speechQueue`, `isSpeaking` e `processarFila()`. Ela protege chamadas do `expo-speech` contra sobreposição enquanto o processo JS está ativo; não é uma fila persistente e não substitui a fila Android.
 
@@ -133,13 +134,11 @@ O contrato em `NubankNotificationListener.types.ts` expõe operações relevante
 
 Os valores estão em `PixSpeechQueue.kt` e devem ser revistos com cautela:
 
-- `CAPTURE_STORAGE_GRACE_MS = 2_500`: período para dar chance ao fluxo JS de gravar o histórico/confirmar a fila antes do TTS nativo.
 - `SPEECH_RETRY_DELAY_MS = 15_000`: espera antes de reinicializar o mecanismo após falha.
 - `SPEECH_WATCHDOG_MS = 45_000`: timeout de uma tentativa de fala.
-- `JAVASCRIPT_SPEECH_TIMEOUT_MS = 45_000`: expiração da reserva JS para evitar item preso sem retorno.
 - Assinaturas concluídas: retenção de 24 horas, com limite de 200 entradas.
 
-Esses tempos são políticas de recuperação, não garantias do sistema operacional. Alterá-los pode aumentar latência, duplicatas ou risco de concorrência entre motores.
+Os tempos de retry/watchdog são políticas de recuperação, não garantias do sistema operacional. O áudio não aguarda mais o salvamento do relatório JavaScript.
 
 ### Garantias pretendidas e limites
 
@@ -184,11 +183,11 @@ O parser nativo pode reconhecer texto vindo de outros pacotes, mas isso não os 
 
 ## 7. Riscos e próximos passos para quem continuar
 
-### Prioridade alta: persistência atômica da conclusão da fala
+### Prioridade alta: falhas de commit e entrega exatamente uma vez
 
-Revisar `completeJavascriptSpeech()` e `complete(item)` em `PixSpeechQueue.kt`. Ambas removem o item da fila em memória antes/de forma acoplada à persistência e há chamadas a `persistQueue()` cujo retorno é ignorado. Se a conclusão da fala não for gravada com sucesso, o estado persistido pode ficar inconsistente; dependendo da ordem efetiva de gravação, há risco de repetição ou perda lógica da fila após reinício. Implementar transição atômica com rollback ou protocolo de estado que mantenha o item durável até que a conclusão e a deduplicação estejam confirmadas. Incluir falha simulada de `commit()` nos testes onde viável.
+A fila e as assinaturas concluídas agora são gravadas juntas em um único `commit()`. Se um commit de conclusão falha, o item permanece no diário em memória, mas uma interrupção do processo antes de nova gravação ainda pode causar repetição após reinício; não há garantia de áudio exatamente uma vez diante de encerramento abrupto do Android. Incluir falha simulada de `commit()` nos testes onde viável.
 
-Também revisar os usos do retorno de `persistQueue()` na expiração da reserva JS e em `setMonitoringEnabled(false)`. Desativar deliberadamente pode limpar a fila, mas a decisão e o comportamento precisam ser explícitos; falha de persistência não deve virar sucesso silencioso.
+Desativar o monitoramento encerra anúncios pendentes, mas preserva entradas cujo relatório ainda não foi confirmado. Validar também falha de commit nesse caminho.
 
 ### Prioridade alta: ordem de relatório versus cancelamento
 
@@ -196,21 +195,19 @@ O estado atual cancela após persistir a fala na fila nativa, antes de o relató
 
 ### Testes funcionais recomendados
 
-1. Dois ou mais Pix seguidos, de valores/pagadores diferentes: todos devem ser registrados e anunciados uma vez, em ordem.
+1. Cinco ou mais Pix em sequência rápida, inclusive notificações com texto repetido e notificações agrupadas em `EXTRA_TEXT_LINES`: todos os eventos que o Android entregar devem ser registrados e anunciados uma vez, em ordem.
 2. Falha/recusa do `SharedPreferences.commit()`: manter notificação visível e não afirmar que o item está protegido.
-3. Falha do AsyncStorage: erro visível/logado e confirmar comportamento da fila após a janela de segurança.
-4. Expo Speech ocupado, interrompido, erro e ausência de callback: nativo assume sem fala simultânea.
-5. Matar o processo em cada fronteira: depois da captura, depois do `commit()`, depois do cancelamento, após começar áudio e antes da conclusão persistida.
-6. Notificação atualizada/agrupada, duplicada, pagamento enviado, Pix recebido, valor malformado e pagador ausente.
-7. Pacote de banco mapeado e desconhecido: cancelar somente o pacote explicitamente suportado.
+3. Falha do AsyncStorage: erro visível/logado, sem atrasar nem descartar o anúncio nativo.
+4. Falha ao persistir a fila nativa: Expo Speech assume; falha no mecanismo nativo deve manter retry sem duplicar a fala.
+5. Matar o processo após o `commit()`, após cancelar a notificação e antes/depois da gravação do relatório: recuperar o registro uma vez ao abrir o app.
+6. Nubank com título “Transferência recebida” e corpo “Recebemos sua transferência de R$ ...”, sem a palavra Pix; testar também “Você recebeu uma transferência de R$ ...”, Neon com “Pix recebido”, notificação atualizada/agrupada, duplicada, Pix enviado, pontuação final (`R$ 0,01.`), espaços não separáveis, valor malformado e pagador ausente.
+7. Pacote de banco mapeado e app desconhecido: só reconhecer/cancelar pacotes explicitamente suportados.
 8. Listener desativado, permissão removida, reinicialização do serviço e boot/reconexão.
 9. Android real com diferentes fabricantes, otimização de bateria, tela bloqueada, mídia silenciada e dispositivos Bluetooth.
 
 ### Validação/build
 
-Na sessão de 08/10/2026 passaram `npx.cmd expo lint`, `npx.cmd tsc --noEmit` e `git diff --check`. `expo prebuild --platform android --no-install` gerou Android, mas a compilação `:nubank-notification-listener:compileDebugKotlin` **não foi executada**, pois não havia `JAVA_HOME` nem `java` no ambiente; o diretório `android/` gerado apenas para a tentativa foi removido. Não houve teste em dispositivo nem nova build EAS nessa validação.
-
-Após mudanças nativas, compilar o módulo/build Android com JDK configurado e gerar uma nova build instalável: alterações Kotlin no módulo local não entram num app que já está instalado. Testar no dispositivo real antes de concluir que áudio e cancelamento estão funcionando.
+Após mudanças nativas, compilar o módulo/build Android e gerar uma nova build instalável: alterações Kotlin no módulo local não entram num app que já está instalado. O beep de 250 ms é apenas diagnóstico em builds debug; builds de produção não criam nem reproduzem esse sinal. Testar em dispositivo real, pois o sinal enviado ao sistema não garante volume audível se o fluxo estiver silenciado.
 
 ## 8. Regras para mudanças futuras
 

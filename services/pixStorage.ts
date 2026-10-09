@@ -106,7 +106,10 @@ export function savePixRecord(
       ...record,
       id: record.id ?? `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
     };
-    const updatedRecords = removeExpiredRecords([savedRecord, ...records]);
+    const updatedRecords = removeExpiredRecords([
+      savedRecord,
+      ...records.filter((existingRecord) => existingRecord.id !== savedRecord.id),
+    ]);
     await AsyncStorage.setItem(PIX_RECORDS_STORAGE_KEY, JSON.stringify(updatedRecords));
     notifyListeners(updatedRecords);
     return savedRecord;
