@@ -81,14 +81,15 @@ class NubankNotificationListenerModule : Module() {
       val settings = PixFalaPreferences.getSpeechSettings(context)
       mapOf(
         "template" to settings.template,
-        "rate" to settings.rate.toDouble()
+        "rate" to settings.rate.toDouble(),
+        "volume" to settings.volume.toDouble()
       )
     }
 
-    Function("setSpeechSettings") { template: String, rate: Double ->
+    Function("setSpeechSettings") { template: String, rate: Double, volume: Double ->
       val context = appContext.reactContext
         ?: throw IllegalStateException("O contexto Android não está disponível.")
-      PixFalaPreferences.setSpeechSettings(context, template, rate.toFloat())
+      PixFalaPreferences.setSpeechSettings(context, template, rate.toFloat(), volume.toFloat())
     }
 
     Function("isNotificationPermissionGranted") {

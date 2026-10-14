@@ -13,6 +13,7 @@ export type SpeechRate = (typeof SPEECH_RATES)[number];
 export type SpeechSettings = {
   template: string;
   rate: SpeechRate;
+  volume: number;
 };
 
 function validateSpeechSettings(value: unknown): SpeechSettings {
@@ -34,16 +35,11 @@ function validateSpeechSettings(value: unknown): SpeechSettings {
   ) {
     throw new Error('Selecione uma velocidade de fala disponível.');
   }
-  const legacyNameCount = settings.nameCount ?? 2;
-  const template = settings.template.trim();
-  const shouldMigrateLegacyName = settings.namePartsVersion !== 2 && legacyNameCount === 2 &&
-    /\{nome\}/iu.test(template) && !/\{sobrenome\}/iu.test(template);
-  const candidateTemplate = shouldMigrateLegacyName
-    ? template.replace(/\{nome\}/giu, '{nome} {sobrenome}')
-    : template;
-  const migratedTemplate = candidateTemplate.length <= 180 ? candidateTemplate : template;
-
-  return { template: migratedTemplate, rate: settings.rate };
+  const volume = settings.volume ?? 1;
+  if (typeof volume !== 'number' || !Number.isFinite(volume) || volume < 0 || volume > 1) {
+    throw new Error('O volume da fala deve estar entre 0% e 100%.');
+  }
+  return { template: settings.template.trim(), rate: settings.rate, volume };
 }
 
 async function loadNativeModule(): Promise<NubankNotificationListenerModule> {
@@ -59,7 +55,7 @@ export async function getSpeechSettings(): Promise<SpeechSettings> {
 
   const serializedSettings = await AsyncStorage.getItem(SPEECH_SETTINGS_STORAGE_KEY);
   if (serializedSettings === null) {
-    return { template: DEFAULT_SPEECH_TEMPLATE, rate: 1 };
+    return { template: DEFAULT_SPEECH_TEMPLATE, rate: 1, volume: 1 };
   }
 
   let parsedSettings: unknown;
@@ -75,7 +71,11 @@ export async function saveSpeechSettings(settings: SpeechSettings): Promise<Spee
   const validatedSettings = validateSpeechSettings(settings);
   if (Platform.OS === 'android') {
     const nativeModule = await loadNativeModule();
-    if (!nativeModule.setSpeechSettings(validatedSettings.template, validatedSettings.rate)) {
+    if (!nativeModule.setSpeechSettings(
+      validatedSettings.template,
+      validatedSettings.rate,
+      validatedSettings.volume,
+    )) {
       throw new Error('O Android não confirmou a gravação das configurações de voz.');
     }
     return validatedSettings;
@@ -83,7 +83,7 @@ export async function saveSpeechSettings(settings: SpeechSettings): Promise<Spee
 
   await AsyncStorage.setItem(
     SPEECH_SETTINGS_STORAGE_KEY,
-    JSON.stringify({ ...validatedSettings, namePartsVersion: 2 }),
+    JSON.stringify(validatedSettings),
   );
   return validatedSettings;
 }

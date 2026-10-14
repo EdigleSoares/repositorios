@@ -9,7 +9,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Check, ChevronDown, ChevronUp, LockKeyhole, Pencil, Plus, Trash2, Volume2 } from 'lucide-react-native';
+import { Check, ChevronDown, ChevronUp, LockKeyhole, Minus, Pencil, Plus, Trash2, Volume2 } from 'lucide-react-native';
 
 import { PixChargeSettings } from '@/components/PixChargeSettings';
 import { theme } from '@/constants/theme';
@@ -49,8 +49,10 @@ export default function SettingsScreen() {
   const [pixChargeConfig, setPixChargeConfig] = useState<PixChargeConfig | null>(null);
   const [speechTemplate, setSpeechTemplate] = useState(DEFAULT_SPEECH_TEMPLATE);
   const [speechRate, setSpeechRate] = useState<SpeechRate>(1);
+  const [speechVolume, setSpeechVolume] = useState(1);
   const [savedSpeechTemplate, setSavedSpeechTemplate] = useState(DEFAULT_SPEECH_TEMPLATE);
   const [savedSpeechRate, setSavedSpeechRate] = useState<SpeechRate>(1);
+  const [savedSpeechVolume, setSavedSpeechVolume] = useState(1);
   const [speechLoaded, setSpeechLoaded] = useState(false);
   const [savingSpeech, setSavingSpeech] = useState(false);
   const [testingSpeech, setTestingSpeech] = useState(false);
@@ -88,6 +90,8 @@ export default function SettingsScreen() {
           setSelection({ start: settings.template.length, end: settings.template.length });
           setSpeechRate(settings.rate);
           setSavedSpeechRate(settings.rate);
+          setSpeechVolume(settings.volume);
+          setSavedSpeechVolume(settings.volume);
         }
       })
       .catch((error: unknown) => {
@@ -135,10 +139,12 @@ export default function SettingsScreen() {
       const savedSettings = await saveSpeechSettings({
         template: speechTemplate,
         rate: speechRate,
+        volume: speechVolume,
       });
       setSpeechTemplate(savedSettings.template);
       setSavedSpeechTemplate(savedSettings.template);
       setSavedSpeechRate(savedSettings.rate);
+      setSavedSpeechVolume(savedSettings.volume);
       setSpeechEditing(false);
       setSpeechExpanded(false);
       Alert.alert('Voz atualizada', 'A frase e a velocidade serão usadas no próximo Pix recebido.');
@@ -160,6 +166,7 @@ export default function SettingsScreen() {
   const handleCancelSpeechEdit = () => {
     setSpeechTemplate(savedSpeechTemplate);
     setSpeechRate(savedSpeechRate);
+    setSpeechVolume(savedSpeechVolume);
     setSelection({ start: savedSpeechTemplate.length, end: savedSpeechTemplate.length });
     setSpeechEditing(false);
   };
@@ -168,7 +175,7 @@ export default function SettingsScreen() {
     if (!speechLoaded || savingSpeech || testingSpeech) return;
     setTestingSpeech(true);
     try {
-      await testarMensagemVoz(speechTemplate, speechRate);
+      await testarMensagemVoz(speechTemplate, speechRate, speechVolume);
     } catch (error) {
       Alert.alert(
         'Não foi possível testar a voz',
@@ -177,6 +184,12 @@ export default function SettingsScreen() {
     } finally {
       setTestingSpeech(false);
     }
+  };
+
+  const adjustSpeechVolume = (delta: number) => {
+    setSpeechVolume((volume) =>
+      Math.min(1, Math.max(0, Math.round((volume + delta) * 10) / 10)),
+    );
   };
 
   const resetProductForm = () => {
@@ -279,8 +292,8 @@ export default function SettingsScreen() {
                 <Text style={styles.cardTitle}>Frase do anúncio</Text>
                 <Text style={styles.cardSubtitle}>
                   {speechTemplate === DEFAULT_SPEECH_TEMPLATE
-                    ? `Padrão • ${speechRate.toLocaleString('pt-BR')}x`
-                    : `Personalizada • ${speechRate.toLocaleString('pt-BR')}x`}
+                    ? `Padrão • ${speechRate.toLocaleString('pt-BR')}x • ${Math.round(speechVolume * 100)}%`
+                    : `Personalizada • ${speechRate.toLocaleString('pt-BR')}x • ${Math.round(speechVolume * 100)}%`}
                 </Text>
               </View>
               {speechExpanded
@@ -298,7 +311,7 @@ export default function SettingsScreen() {
                       <Text style={styles.fieldLabel}>MENSAGEM ATUAL</Text>
                       <Text style={styles.lockedSpeechText}>{speechTemplate}</Text>
                       <Text style={styles.helper}>
-                        Velocidade: {speechRate.toLocaleString('pt-BR')}x
+                        Velocidade: {speechRate.toLocaleString('pt-BR')}x • Volume: {Math.round(speechVolume * 100)}%
                       </Text>
                     </View>
                     <Pressable
@@ -350,7 +363,7 @@ export default function SettingsScreen() {
                     multiline
                     onChangeText={setSpeechTemplate}
                     onSelectionChange={({ nativeEvent }) => setSelection(nativeEvent.selection)}
-                    placeholder="Ex.: Pix de {valor} recebido de {nome} {sobrenome}. Obrigado!"
+                    placeholder="Ex.: Pix de {valor} recebido de {nome}. Obrigado!"
                     placeholderTextColor={theme.colors.muted}
                     selection={selection}
                     style={styles.messageInput}
@@ -358,7 +371,7 @@ export default function SettingsScreen() {
                     value={speechTemplate}
                   />
                   <Text style={styles.helper}>
-                    A frase pode omitir uma variável. Até 180 caracteres.
+                    Use apenas as variáveis desejadas: {'{nome}'} para o primeiro nome, {'{sobrenome}'} para o sobrenome e {'{valor}'} para o valor. Você também pode omitir nome e sobrenome. Até 180 caracteres.
                   </Text>
 
                   <Text style={styles.fieldLabel}>VELOCIDADE DA FALA</Text>
@@ -385,6 +398,52 @@ export default function SettingsScreen() {
                       );
                     })}
                   </View>
+
+                  <Text style={styles.fieldLabel}>VOLUME DA VOZ</Text>
+                  <View style={styles.volumeControl}>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Diminuir volume da voz"
+                      accessibilityState={{ disabled: !speechLoaded || !speechEditing || speechVolume <= 0 }}
+                      disabled={!speechLoaded || !speechEditing || speechVolume <= 0}
+                      onPress={() => adjustSpeechVolume(-0.1)}
+                      style={({ pressed }) => [
+                        styles.volumeButton,
+                        (!speechLoaded || !speechEditing || speechVolume <= 0) && styles.disabledButton,
+                        pressed && styles.pressed,
+                      ]}>
+                      <Minus color={theme.colors.text} size={18} />
+                    </Pressable>
+                    <View style={styles.volumeMeter}>
+                      <View style={styles.volumeMeterLabels}>
+                        <Volume2 color={theme.colors.neon} size={17} />
+                        <Text style={styles.volumeValue}>{Math.round(speechVolume * 100)}%</Text>
+                      </View>
+                      <View
+                        accessibilityLabel={`Volume da voz ${Math.round(speechVolume * 100)} por cento`}
+                        accessibilityRole="progressbar"
+                        accessibilityValue={{ min: 0, max: 100, now: Math.round(speechVolume * 100) }}
+                        style={styles.volumeTrack}>
+                        <View style={[styles.volumeFill, { width: `${speechVolume * 100}%` }]} />
+                      </View>
+                    </View>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Aumentar volume da voz"
+                      accessibilityState={{ disabled: !speechLoaded || !speechEditing || speechVolume >= 1 }}
+                      disabled={!speechLoaded || !speechEditing || speechVolume >= 1}
+                      onPress={() => adjustSpeechVolume(0.1)}
+                      style={({ pressed }) => [
+                        styles.volumeButton,
+                        (!speechLoaded || !speechEditing || speechVolume >= 1) && styles.disabledButton,
+                        pressed && styles.pressed,
+                      ]}>
+                      <Plus color={theme.colors.neon} size={18} />
+                    </Pressable>
+                  </View>
+                  <Text style={styles.helper}>
+                    Ajusta apenas o volume da fala do PixFala, sem alterar o volume geral do celular.
+                  </Text>
 
                   <View style={styles.speechEditActions}>
                     <Pressable
@@ -650,6 +709,39 @@ const styles = StyleSheet.create({
   rateOptionSelected: { borderColor: theme.colors.neon, backgroundColor: '#10291A' },
   rateLabel: { color: theme.colors.secondary, fontSize: 12, fontWeight: '700' },
   rateLabelSelected: { color: theme.colors.neon },
+  volumeControl: {
+    minHeight: 58,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 10,
+    borderRadius: 13,
+    backgroundColor: theme.colors.black,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  volumeButton: {
+    width: 42,
+    height: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    backgroundColor: theme.colors.surfaceRaised,
+  },
+  volumeMeter: { flex: 1, gap: 7 },
+  volumeMeterLabels: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  volumeValue: { color: theme.colors.text, fontSize: 12, fontWeight: '800' },
+  volumeTrack: {
+    height: 6,
+    overflow: 'hidden',
+    borderRadius: theme.radius.pill,
+    backgroundColor: theme.colors.surfaceRaised,
+  },
+  volumeFill: {
+    height: '100%',
+    borderRadius: theme.radius.pill,
+    backgroundColor: theme.colors.neon,
+  },
   speechTestButton: {
     minHeight: 44,
     flexDirection: 'row',

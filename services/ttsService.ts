@@ -14,6 +14,7 @@ import {
 type SpeechQueueItem = {
   text: string;
   rate: SpeechRate;
+  volume: number;
   resolve: () => void;
   reject: (error: Error) => void;
 };
@@ -21,9 +22,9 @@ type SpeechQueueItem = {
 const speechQueue: SpeechQueueItem[] = [];
 let isSpeaking = false;
 
-function enfileirarFala(text: string, rate: SpeechRate): Promise<void> {
+function enfileirarFala(text: string, rate: SpeechRate, volume: number): Promise<void> {
   return new Promise<void>((resolve, reject) => {
-    speechQueue.push({ text, rate, resolve, reject });
+    speechQueue.push({ text, rate, volume, resolve, reject });
     processarFila();
   });
 }
@@ -55,6 +56,7 @@ function processarFila(): void {
     Speech.speak(nextSpeech.text, {
       language: 'pt-BR',
       rate: nextSpeech.rate,
+      volume: nextSpeech.volume,
       onStart: () => console.log('[PixFala][tts] Expo Speech iniciou o anúncio.'),
       onDone: () => {
         console.log('[PixFala][tts] Expo Speech concluiu o anúncio.');
@@ -76,6 +78,17 @@ function processarFila(): void {
   }
 }
 
+function preencherModelo(template: string, replacements: Record<string, string>): string {
+  const populatedTemplate = Object.entries(replacements).reduce(
+    (text, [variable, value]) => text.replace(new RegExp(`\\{${variable}\\}`, 'giu'), value),
+    template,
+  );
+  return populatedTemplate
+    .replace(/\s+([.,!?;:])/gu, '$1')
+    .replace(/\s{2,}/gu, ' ')
+    .trim();
+}
+
 export function falarPix(valor?: string, pagador?: string): Promise<void> {
   const valorFormatado = valor === undefined ? null : formatarValorMonetario(valor);
   if (valor !== undefined && !valorFormatado) {
@@ -89,19 +102,19 @@ export function falarPix(valor?: string, pagador?: string): Promise<void> {
 
   const amountInWords = valorFormatado ? formatarValorPorExtenso(valorFormatado) : 'valor não informado';
   return getSpeechSettings().then((settings) => {
-    const voiceName = formatarNomeParaVoz(nomePagador ?? undefined) ?? 'Cliente';
-    const voiceSurname = formatarSobrenomeParaVoz(nomePagador ?? undefined) ?? '';
-    const text = settings.template
-      .replace(/\{valor\}/giu, amountInWords)
-      .replace(/\{nome\}/giu, voiceName)
-      .replace(/\{sobrenome\}/giu, voiceSurname);
-    return enfileirarFala(text, settings.rate);
+    const text = preencherModelo(settings.template, {
+      valor: amountInWords,
+      nome: formatarNomeParaVoz(nomePagador ?? undefined) ?? 'Cliente',
+      sobrenome: formatarSobrenomeParaVoz(nomePagador ?? undefined) ?? '',
+    });
+    return enfileirarFala(text, settings.rate, settings.volume);
   });
 }
 
 export function testarMensagemVoz(
   template: string,
   rate: SpeechRate,
+  volume: number,
 ): Promise<void> {
   if (!template.trim() || template.length > 180) {
     throw new Error('A frase precisa ter entre 1 e 180 caracteres.');
@@ -109,10 +122,13 @@ export function testarMensagemVoz(
   if (rate !== 1 && rate !== 1.5 && rate !== 2) {
     throw new Error('Selecione uma velocidade de fala disponível.');
   }
-  const sampleText = template
-    .trim()
-    .replace(/\{valor\}/giu, 'dois reais e cinquenta centavos')
-    .replace(/\{nome\}/giu, 'Maria')
-    .replace(/\{sobrenome\}/giu, 'Silva');
-  return enfileirarFala(sampleText, rate);
+  if (!Number.isFinite(volume) || volume < 0 || volume > 1) {
+    throw new Error('O volume da fala deve estar entre 0% e 100%.');
+  }
+  const sampleText = preencherModelo(template.trim(), {
+    valor: 'dois reais e cinquenta centavos',
+    nome: 'Maria',
+    sobrenome: 'Silva',
+  });
+  return enfileirarFala(sampleText, rate, volume);
 }

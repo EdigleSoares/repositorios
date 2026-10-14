@@ -22,7 +22,7 @@ PixFala é um aplicativo Android com interface em React Native, Expo e TypeScrip
 
 O escopo inicial foi UI, tema e navegação. O projeto passou a incluir recursos nativos Android para o monitoramento real, mas ainda não há garantia de reprodução audível em toda combinação de dispositivo, fabricante, versão do Android, engine de TTS, permissões e estado de energia.
 
-Na aba Configurações, a mensagem de voz aceita os marcadores `{nome}`, `{sobrenome}` e `{valor}`, inseridos por atalhos na posição atual do cursor, além de velocidades de 1x, 1,5x e 2x. A configuração é salva no Android nativo para a fala principal não depender do JavaScript; a rota Expo Speech consulta a mesma configuração. Produtos (nome e preço unitário) são armazenados localmente. Na cobrança, toques em `+` adicionam unidades, `−` reduz a quantidade e o valor do QR é atualizado pela soma; digitar manualmente o valor substitui a seleção de produtos.
+Na aba Configurações, a mensagem de voz aceita os marcadores opcionais `{nome}`, `{sobrenome}` e `{valor}`, inseridos por atalhos na posição atual do cursor, além de velocidades de 1x, 1,5x e 2x. Nome e sobrenome são substituídos independentemente; omitir os marcadores significa não falar esses dados. O volume da fala pode ser alterado de 0 a 100%, em passos de 10%, e afeta somente a voz do PixFala, não o volume geral do aparelho. O controle é persistido junto à frase e velocidade: Android usa `TextToSpeech.Engine.KEY_PARAM_VOLUME` e Expo Speech usa a opção `volume`, ambos no intervalo `0.0–1.0`. Configurações antigas sem o campo volume são interpretadas como 100%. O sinal de diagnóstico Android, disponível apenas em builds debug, usa `ToneGenerator` separado e não segue este controle. A configuração é salva no Android nativo para a fala principal não depender do JavaScript; a rota Expo Speech consulta a mesma configuração. O carregamento não deve acrescentar automaticamente `{sobrenome}` a templates antigos, pois isso anula a personalização escolhida pelo lojista. Produtos (nome e preço unitário) são armazenados localmente. Na cobrança, toques em `+` adicionam unidades, `−` reduz a quantidade e o valor do QR é atualizado pela soma; digitar manualmente o valor substitui a seleção de produtos.
 
 ## 2. Mapa dos principais arquivos
 
@@ -38,7 +38,7 @@ Na aba Configurações, a mensagem de voz aceita os marcadores `{nome}`, `{sobre
 - `components/StatusToggle.tsx`: controle visual de ativação.
 - `components/PixChargeGenerator.tsx`: entrada de valor e apresentação do QR.
 - `components/PixChargeSettings.tsx`: configuração e bloqueio/desbloqueio da chave.
-- `services/speechSettingsService.ts`: frase/velocidade de fala; Android usa SharedPreferences nativas para que a fila funcione sem runtime JS.
+- `services/speechSettingsService.ts`: frase, velocidade e volume da fala; Android usa SharedPreferences nativas para que a fila funcione sem runtime JS.
 - `services/savedProductsService.ts`: persistência e validação local do catálogo de produtos.
 - `components/PermissionSetupModal.tsx`: explicação e condução pelas permissões Android.
 
@@ -116,7 +116,7 @@ O serviço TS e a fila JS **ainda existem** para contingência; a rota principal
 - A fila e as assinaturas concluídas são serializadas para JSON e gravadas juntas com `SharedPreferences.Editor.commit()`.
 - Cada item guarda identificador, chave e hora da notificação, pacote, valor, pagador, texto, assinatura, instante de captura e estados de fala/relatório.
 - Ao conectar o `NotificationListenerService`, a fila restaura estado e tenta processar pendências.
-- A frase configurável e o fator de velocidade são lidos das preferências nativas no momento de cada anúncio; `{nome}` e `{sobrenome}` são substituídos separadamente, e placeholders desconhecidos são preservados como texto.
+- A frase configurável e o fator de velocidade são lidos das preferências nativas no momento de cada anúncio; `{nome}` (primeiro nome) e `{sobrenome}` são substituídos separadamente, são opcionais, e placeholders desconhecidos são preservados como texto. Espaços duplos e espaços antes da pontuação são normalizados depois da substituição.
 - `TextToSpeech` é inicializado em `pt-BR`; se a voz estiver ausente/não suportada, tenta o locale padrão.
 - `UtteranceProgressListener` trata conclusão, erro e interrupção.
 - Um sinal curto em `STREAM_NOTIFICATION` é enviado após a persistência da fila; o TTS de voz continua em sequência e pode começar mais tarde conforme o mecanismo do aparelho.

@@ -33,7 +33,8 @@ private data class PixSpeechItem(
 
 internal data class PixSpeechSettings(
   val template: String,
-  val rate: Float
+  val rate: Float,
+  val volume: Float
 )
 
 private data class PixReceiptCandidate(
@@ -80,6 +81,9 @@ internal class PixSpeechQueue(
       .replace("{valor}", amountInWords(item.amount), ignoreCase = true)
       .replace("{nome}", item.payer.split(WHITESPACE_PATTERN).firstOrNull() ?: "Cliente", ignoreCase = true)
       .replace("{sobrenome}", item.payer.split(WHITESPACE_PATTERN).getOrNull(1) ?: "", ignoreCase = true)
+      .replace(Regex("""\s+([.,!?;:])"""), "$1")
+      .replace(WHITESPACE_PATTERN, " ")
+      .trim()
 
   override fun onInit(status: Int) {
     handler.post {
@@ -419,10 +423,13 @@ internal class PixSpeechQueue(
       Log.w(TAG, "O mecanismo TTS recusou a velocidade configurada; será usada a velocidade normal.")
       engine.setSpeechRate(1f)
     }
+    val speechParameters = Bundle().apply {
+      putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, settings.volume)
+    }
     val result = engine.speak(
       buildSpeechText(item, settings),
       TextToSpeech.QUEUE_FLUSH,
-      Bundle(),
+      speechParameters,
       item.id
     )
     if (result == TextToSpeech.ERROR) {
@@ -840,8 +847,7 @@ internal object PixFalaPreferences {
   private const val KEY_MONITORING_ENABLED = "monitoring_enabled"
   private const val KEY_SPEECH_TEMPLATE = "speech_template"
   private const val KEY_SPEECH_RATE = "speech_rate"
-  private const val KEY_SPEECH_NAME_COUNT = "speech_name_count"
-  private const val KEY_SPEECH_NAME_PARTS_VERSION = "speech_name_parts_version"
+  private const val KEY_SPEECH_VOLUME = "speech_volume"
   private const val DEFAULT_SPEECH_TEMPLATE =
     "Pix recebido de {valor} de {nome} {sobrenome}. Muito obrigado!"
   private const val MAX_SPEECH_TEMPLATE_LENGTH = 180
@@ -852,28 +858,19 @@ internal object PixFalaPreferences {
 
   fun getSpeechSettings(context: Context): PixSpeechSettings {
     val preferences = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
-    val storedTemplate = preferences.getString(KEY_SPEECH_TEMPLATE, DEFAULT_SPEECH_TEMPLATE)
+    val template = preferences.getString(KEY_SPEECH_TEMPLATE, DEFAULT_SPEECH_TEMPLATE)
       ?: DEFAULT_SPEECH_TEMPLATE
     val rate = preferences.getFloat(KEY_SPEECH_RATE, 1f)
-    val nameCount = preferences.getInt(KEY_SPEECH_NAME_COUNT, 2)
-    val shouldMigrateLegacyName = preferences.getInt(KEY_SPEECH_NAME_PARTS_VERSION, 1) < 2 &&
-      nameCount == 2 && storedTemplate.contains("{nome}", ignoreCase = true) &&
-      !storedTemplate.contains("{sobrenome}", ignoreCase = true)
-    val candidateTemplate = if (shouldMigrateLegacyName) {
-      storedTemplate.replace("{nome}", "{nome} {sobrenome}", ignoreCase = true)
-    } else {
-      storedTemplate
-    }
-    val template = candidateTemplate.takeIf { it.length <= MAX_SPEECH_TEMPLATE_LENGTH } ?: storedTemplate
+    val volume = preferences.getFloat(KEY_SPEECH_VOLUME, 1f)
     if (template.isBlank() || template.length > MAX_SPEECH_TEMPLATE_LENGTH ||
-      rate !in setOf(1f, 1.5f, 2f)
+      rate !in setOf(1f, 1.5f, 2f) || volume !in 0f..1f
     ) {
       throw IllegalStateException("As configurações de voz salvas são inválidas.")
     }
-    return PixSpeechSettings(template, rate)
+    return PixSpeechSettings(template, rate, volume)
   }
 
-  fun setSpeechSettings(context: Context, template: String, rate: Float): Boolean {
+  fun setSpeechSettings(context: Context, template: String, rate: Float, volume: Float): Boolean {
     val normalizedTemplate = template.trim()
     require(normalizedTemplate.isNotEmpty() && normalizedTemplate.length <= MAX_SPEECH_TEMPLATE_LENGTH) {
       "A frase precisa ter entre 1 e $MAX_SPEECH_TEMPLATE_LENGTH caracteres."
@@ -881,12 +878,16 @@ internal object PixFalaPreferences {
     require(rate in setOf(1f, 1.5f, 2f)) {
       "Selecione uma velocidade de fala disponível."
     }
+    require(volume.isFinite() && volume in 0f..1f) {
+      "O volume da fala deve estar entre 0% e 100%."
+    }
     val saved = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
       .edit()
       .putString(KEY_SPEECH_TEMPLATE, normalizedTemplate)
       .putFloat(KEY_SPEECH_RATE, rate)
-      .putInt(KEY_SPEECH_NAME_PARTS_VERSION, 2)
-      .remove(KEY_SPEECH_NAME_COUNT)
+      .putFloat(KEY_SPEECH_VOLUME, volume)
+      .remove("speech_name_parts_version")
+      .remove("speech_name_count")
       .commit()
     if (!saved) {
       Log.e(TAG, "O Android não confirmou a gravação das configurações de voz.")
