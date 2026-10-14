@@ -75,6 +75,22 @@ class NubankNotificationListenerModule : Module() {
       Unit
     }
 
+    Function("getSpeechSettings") {
+      val context = appContext.reactContext
+        ?: throw IllegalStateException("O contexto Android não está disponível.")
+      val settings = PixFalaPreferences.getSpeechSettings(context)
+      mapOf(
+        "template" to settings.template,
+        "rate" to settings.rate.toDouble()
+      )
+    }
+
+    Function("setSpeechSettings") { template: String, rate: Double ->
+      val context = appContext.reactContext
+        ?: throw IllegalStateException("O contexto Android não está disponível.")
+      PixFalaPreferences.setSpeechSettings(context, template, rate.toFloat())
+    }
+
     Function("isNotificationPermissionGranted") {
       val context = appContext.reactContext ?: return@Function false
       val enabledListeners = Settings.Secure.getString(

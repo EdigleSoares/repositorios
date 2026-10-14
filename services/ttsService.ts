@@ -2,19 +2,31 @@ import * as Speech from 'expo-speech';
 
 import { formatarNomePagador, formatarValorMonetario } from '@/utils/pixFormatter';
 import {
-  escolherFraseDeAgradecimento,
   formatarNomeParaVoz,
+  formatarSobrenomeParaVoz,
   formatarValorPorExtenso,
 } from '@/utils/ttsFormatter';
+import {
+  getSpeechSettings,
+  type SpeechRate,
+} from '@/services/speechSettingsService';
 
 type SpeechQueueItem = {
   text: string;
+  rate: SpeechRate;
   resolve: () => void;
   reject: (error: Error) => void;
 };
 
 const speechQueue: SpeechQueueItem[] = [];
 let isSpeaking = false;
+
+function enfileirarFala(text: string, rate: SpeechRate): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    speechQueue.push({ text, rate, resolve, reject });
+    processarFila();
+  });
+}
 
 function processarFila(): void {
   if (isSpeaking) return;
@@ -42,7 +54,7 @@ function processarFila(): void {
   try {
     Speech.speak(nextSpeech.text, {
       language: 'pt-BR',
-      rate: 0.92,
+      rate: nextSpeech.rate,
       onStart: () => console.log('[PixFala][tts] Expo Speech iniciou o anúncio.'),
       onDone: () => {
         console.log('[PixFala][tts] Expo Speech concluiu o anúncio.');
@@ -75,17 +87,32 @@ export function falarPix(valor?: string, pagador?: string): Promise<void> {
     throw new Error('Informe um nome de pagador válido.');
   }
 
-  const voiceName = formatarNomeParaVoz(nomePagador ?? undefined);
   const amountInWords = valorFormatado ? formatarValorPorExtenso(valorFormatado) : 'valor não informado';
-  const thankYou = escolherFraseDeAgradecimento();
-  const text = `Pix recebido de ${amountInWords} de ${voiceName ?? 'Cliente'}. ${thankYou}`;
-
-  return new Promise<void>((resolve, reject) => {
-    speechQueue.push({
-      text,
-      resolve,
-      reject: (error) => reject(error),
-    });
-    processarFila();
+  return getSpeechSettings().then((settings) => {
+    const voiceName = formatarNomeParaVoz(nomePagador ?? undefined) ?? 'Cliente';
+    const voiceSurname = formatarSobrenomeParaVoz(nomePagador ?? undefined) ?? '';
+    const text = settings.template
+      .replace(/\{valor\}/giu, amountInWords)
+      .replace(/\{nome\}/giu, voiceName)
+      .replace(/\{sobrenome\}/giu, voiceSurname);
+    return enfileirarFala(text, settings.rate);
   });
+}
+
+export function testarMensagemVoz(
+  template: string,
+  rate: SpeechRate,
+): Promise<void> {
+  if (!template.trim() || template.length > 180) {
+    throw new Error('A frase precisa ter entre 1 e 180 caracteres.');
+  }
+  if (rate !== 1 && rate !== 1.5 && rate !== 2) {
+    throw new Error('Selecione uma velocidade de fala disponível.');
+  }
+  const sampleText = template
+    .trim()
+    .replace(/\{valor\}/giu, 'dois reais e cinquenta centavos')
+    .replace(/\{nome\}/giu, 'Maria')
+    .replace(/\{sobrenome\}/giu, 'Silva');
+  return enfileirarFala(sampleText, rate);
 }

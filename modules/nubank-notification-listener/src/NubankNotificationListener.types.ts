@@ -27,6 +27,11 @@ export type PendingPixReport = {
   payer: string;
 };
 
+export type PixSpeechSettings = {
+  template: string;
+  rate: 1 | 1.5 | 2;
+};
+
 export declare class NubankNotificationListenerModule extends NativeModule<BankNotificationListenerEvents> {
   cancelNotification(key: string): void;
   ensurePixSpeechQueued(
@@ -40,6 +45,8 @@ export declare class NubankNotificationListenerModule extends NativeModule<BankN
   getPendingPixReports(): PendingPixReport[];
   isMonitoringEnabled(): boolean;
   markPixReportStored(eventId: string): boolean;
+  getSpeechSettings(): PixSpeechSettings;
+  setSpeechSettings(template: string, rate: number): boolean;
   setMonitoringEnabled(enabled: boolean): void;
   isNotificationPermissionGranted(): boolean;
   openNotificationListenerSettings(): void;

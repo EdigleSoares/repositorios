@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Animated, Easing } from 'react-native';
 import { Tabs } from 'expo-router';
-import { FileText, Home, Rocket } from 'lucide-react-native';
+import { FileText, Home, Rocket, Settings2 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { LicenseGate } from '@/components/LicenseGate';
@@ -85,6 +85,13 @@ export default function TabLayout() {
           options={{
             title: 'Relatório',
             tabBarIcon: ({ color, size }) => <FileText color={color} size={size} strokeWidth={1.8} />,
+          }}
+        />
+        <Tabs.Screen
+          name="configuracoes"
+          options={{
+            title: 'Ajustes',
+            tabBarIcon: ({ color, size }) => <Settings2 color={color} size={size} strokeWidth={1.8} />,
           }}
         />
         <Tabs.Screen

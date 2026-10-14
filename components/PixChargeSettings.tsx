@@ -37,7 +37,7 @@ export function PixChargeSettings({ config, onSaved }: PixChargeSettingsProps) {
 }
 
 function PixChargeSettingsForm({ config, onSaved }: PixChargeSettingsProps) {
-  const [expanded, setExpanded] = useState(!config);
+  const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(!config);
   const [pixKey, setPixKey] = useState(config?.pixKey ?? '');
   const [merchantName, setMerchantName] = useState(config?.merchantName ?? '');
@@ -96,7 +96,9 @@ function PixChargeSettingsForm({ config, onSaved }: PixChargeSettingsProps) {
         <View style={styles.headerCopy}>
           <Text style={styles.title}>Chave Pix de cobrança</Text>
           <Text style={styles.subtitle}>
-            {config ? `Salva e bloqueada • ${config.pixKeyType}` : 'Configure uma vez para cobrar no balcão'}
+            {config
+              ? `Salva • ${config.pixKeyType} • toque para editar`
+              : 'Cadastre para gerar cobranças por QR Code'}
           </Text>
         </View>
         {expanded ? (
@@ -166,7 +168,7 @@ function PixChargeSettingsForm({ config, onSaved }: PixChargeSettingsProps) {
               />
 
               <Text style={styles.helper}>
-                A chave fica criptografada no armazenamento seguro deste aparelho. Nome e cidade são exigidos pelo padrão Pix.
+                A chave é protegida neste aparelho. Nome e cidade aparecem na cobrança.
               </Text>
               <View style={styles.actions}>
                 {config && (
@@ -200,7 +202,7 @@ function PixChargeSettingsForm({ config, onSaved }: PixChargeSettingsProps) {
             </>
           )}
           {config && !editing && (
-            <Text style={styles.lockHint}>Toque no lápis para desbloquear e alterar os dados.</Text>
+            <Text style={styles.lockHint}>Toque no lápis para editar.</Text>
           )}
         </View>
       )}

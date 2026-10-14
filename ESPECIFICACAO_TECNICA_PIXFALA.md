@@ -11,16 +11,18 @@ PixFala é um aplicativo Android com interface em React Native, Expo e TypeScrip
 
 | Área | Implementação atual |
 |---|---|
-| UI e navegação | Expo Router, abas Início, Relatório e Turbine seu Negócio |
+| UI e navegação | Expo Router, abas Início, Relatório, Configurações e Turbine seu Negócio |
 | Tema | Dark/grafite com acento neon verde; componentes e cores em `constants/` e `components/` |
 | Captura Android | Módulo Expo local `nubank-notification-listener`, com `NotificationListenerService` |
 | Histórico | AsyncStorage, serializado localmente, com retenção de até 12 meses |
 | Voz | Fila persistente e TTS nativo; beep Android de 250 ms somente em builds debug; `expo-speech` é contingência se a fila nativa não puder ser persistida |
-| QR Pix | `pix-utils` monta/valida BR Code; `react-native-qrcode-svg` renderiza; configuração guardada com `expo-secure-store` |
+| QR Pix | `pix-utils` monta/valida BR Code; `react-native-qrcode-svg` renderiza; chave em `expo-secure-store`; produtos salvos localmente e somados por quantidade |
 | Notificação contínua | Serviço Android em foreground, com notificação `ongoing` e `FLAG_NO_CLEAR` |
 | Permissões | Acesso ao listener, sobreposição e solicitação de isenção de otimização de bateria |
 
 O escopo inicial foi UI, tema e navegação. O projeto passou a incluir recursos nativos Android para o monitoramento real, mas ainda não há garantia de reprodução audível em toda combinação de dispositivo, fabricante, versão do Android, engine de TTS, permissões e estado de energia.
+
+Na aba Configurações, a mensagem de voz aceita os marcadores `{nome}`, `{sobrenome}` e `{valor}`, inseridos por atalhos na posição atual do cursor, além de velocidades de 1x, 1,5x e 2x. A configuração é salva no Android nativo para a fala principal não depender do JavaScript; a rota Expo Speech consulta a mesma configuração. Produtos (nome e preço unitário) são armazenados localmente. Na cobrança, toques em `+` adicionam unidades, `−` reduz a quantidade e o valor do QR é atualizado pela soma; digitar manualmente o valor substitui a seleção de produtos.
 
 ## 2. Mapa dos principais arquivos
 
@@ -28,13 +30,16 @@ O escopo inicial foi UI, tema e navegação. O projeto passou a incluir recursos
 
 - `app/_layout.tsx`: layout raiz e configuração global do Expo Router.
 - `app/(tabs)/_layout.tsx`: barra de abas e ícones; foguete da aba Turbine tem pulsação sutil.
-- `app/(tabs)/index.tsx`: tela inicial com marca centralizada no header; ordem das sessões: monitoramento, cobrança QR Pix, configuração da chave, captura e licença. O bloco “Painel de controle / Tudo em dia” foi removido para liberar espaço vertical.
+- `app/(tabs)/index.tsx`: tela inicial com marca, monitoramento, cobrança QR Pix com atalhos de produtos, captura e licença.
+- `app/(tabs)/configuracoes.tsx`: chave Pix, personalização da fala e cadastro/edição/exclusão de produtos.
 - `app/(tabs)/relatorio.tsx`: relatório de recebimentos.
 - `app/(tabs)/turbine.tsx`: tela de promoção/recursos para negócios.
 - `constants/theme.ts`: tokens do tema visual.
 - `components/StatusToggle.tsx`: controle visual de ativação.
 - `components/PixChargeGenerator.tsx`: entrada de valor e apresentação do QR.
 - `components/PixChargeSettings.tsx`: configuração e bloqueio/desbloqueio da chave.
+- `services/speechSettingsService.ts`: frase/velocidade de fala; Android usa SharedPreferences nativas para que a fila funcione sem runtime JS.
+- `services/savedProductsService.ts`: persistência e validação local do catálogo de produtos.
 - `components/PermissionSetupModal.tsx`: explicação e condução pelas permissões Android.
 
 ### Serviços JavaScript/TypeScript
@@ -111,6 +116,7 @@ O serviço TS e a fila JS **ainda existem** para contingência; a rota principal
 - A fila e as assinaturas concluídas são serializadas para JSON e gravadas juntas com `SharedPreferences.Editor.commit()`.
 - Cada item guarda identificador, chave e hora da notificação, pacote, valor, pagador, texto, assinatura, instante de captura e estados de fala/relatório.
 - Ao conectar o `NotificationListenerService`, a fila restaura estado e tenta processar pendências.
+- A frase configurável e o fator de velocidade são lidos das preferências nativas no momento de cada anúncio; `{nome}` e `{sobrenome}` são substituídos separadamente, e placeholders desconhecidos são preservados como texto.
 - `TextToSpeech` é inicializado em `pt-BR`; se a voz estiver ausente/não suportada, tenta o locale padrão.
 - `UtteranceProgressListener` trata conclusão, erro e interrupção.
 - Um sinal curto em `STREAM_NOTIFICATION` é enviado após a persistência da fila; o TTS de voz continua em sequência e pode começar mais tarde conforme o mecanismo do aparelho.
@@ -168,6 +174,8 @@ O parser nativo pode reconhecer texto vindo de outros pacotes, mas isso não os 
 ### Histórico
 
 `services/pixStorage.ts` armazena `PixRecord` no AsyncStorage. Cada registro inclui ID, valor, pagador, banco e timestamp, com pacote e texto bruto opcionais. As operações de escrita são enfileiradas para evitar gravações concorrentes; leitura e gravação removem registros mais antigos que 12 meses. A tela de relatório tem filtros por período (dia/semana/mês) e pesquisa por pagador/valor, conforme a implementação da tela.
+
+`services/savedProductsService.ts` persiste produtos no AsyncStorage e valida os dados carregados. A seleção de produtos é temporária na tela de cobrança: cada unidade multiplica o preço salvo e o total preenche o mesmo campo de valor editável usado pelo QR.
 
 ### Cobrança QR
 

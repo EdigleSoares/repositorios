@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
 import { AudioLines, Check, Zap } from 'lucide-react-native';
 import { Alert, AppState, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -9,7 +10,6 @@ import {
 } from '@/components/PermissionSetupModal';
 import { StatusToggle } from '@/components/StatusToggle';
 import { PixChargeGenerator } from '@/components/PixChargeGenerator';
-import { PixChargeSettings } from '@/components/PixChargeSettings';
 import { theme } from '@/constants/theme';
 import {
   hasNotificationAccess,
@@ -36,7 +36,7 @@ export default function HomeScreen() {
   const [pixChargeConfig, setPixChargeConfig] = useState<PixChargeConfig | null>(null);
   const activeRef = useRef(active);
 
-  useEffect(() => {
+  useFocusEffect(useCallback(() => {
     let mounted = true;
     void getPixChargeConfig()
       .then((config) => {
@@ -54,7 +54,7 @@ export default function HomeScreen() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, []));
 
   const refreshNotificationAccess = useCallback(() => {
     void Promise.all([
@@ -216,24 +216,6 @@ export default function HomeScreen() {
         <Text style={styles.sectionTitle}>Cobrança no balcão</Text>
         <PixChargeGenerator config={pixChargeConfig} />
 
-        <Text style={styles.sectionTitle}>Configuração da cobrança</Text>
-        <PixChargeSettings
-          config={pixChargeConfig}
-          onSaved={setPixChargeConfig}
-        />
-
-        <Text style={styles.sectionTitle}>Captura de Pix</Text>
-        <View style={styles.captureCard}>
-          <View style={styles.captureIcon}>
-            <Zap color={theme.colors.neon} size={18} fill={theme.colors.neon} />
-          </View>
-          <View style={styles.captureCopy}>
-            <Text style={styles.captureTitle}>Detecção automática</Text>
-            <Text style={styles.captureDescription}>
-              O PixFala analisa notificações recebidas de qualquer aplicativo e ignora mensagens que não indiquem um Pix recebido.
-            </Text>
-          </View>
-        </View>
         <View style={styles.licenseStatus}>
           <Check color={theme.colors.neon} size={15} strokeWidth={2.6} />
           <Text style={styles.licenseStatusText}>Status da Licença: Ativa ✓</Text>
@@ -311,27 +293,6 @@ const styles = StyleSheet.create({
     marginTop: 12,
     marginBottom: 8,
   },
-  captureCard: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-    padding: 16,
-    borderRadius: theme.radius.card,
-    backgroundColor: theme.colors.surface,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  captureIcon: {
-    width: 38,
-    height: 38,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 13,
-    backgroundColor: '#10291A',
-  },
-  captureCopy: { flex: 1 },
-  captureTitle: { color: theme.colors.text, fontSize: 12, fontWeight: '700' },
-  captureDescription: { color: theme.colors.secondary, fontSize: 10, lineHeight: 15, marginTop: 5 },
   licenseStatus: {
     flexDirection: 'row',
     alignItems: 'center',

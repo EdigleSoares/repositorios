@@ -25,11 +25,15 @@ private data class PixSpeechItem(
   val packageName: String,
   val amount: String,
   val payer: String,
-  val text: String,
   val signature: String,
   val capturedAt: Long,
   var speechCompleted: Boolean,
   var reportStored: Boolean
+)
+
+internal data class PixSpeechSettings(
+  val template: String,
+  val rate: Float
 )
 
 private data class PixReceiptCandidate(
@@ -70,6 +74,12 @@ internal class PixSpeechQueue(
     }
     initializeTextToSpeech()
   }
+
+  private fun buildSpeechText(item: PixSpeechItem, settings: PixSpeechSettings): String =
+    settings.template
+      .replace("{valor}", amountInWords(item.amount), ignoreCase = true)
+      .replace("{nome}", item.payer.split(WHITESPACE_PATTERN).firstOrNull() ?: "Cliente", ignoreCase = true)
+      .replace("{sobrenome}", item.payer.split(WHITESPACE_PATTERN).getOrNull(1) ?: "", ignoreCase = true)
 
   override fun onInit(status: Int) {
     handler.post {
@@ -137,7 +147,6 @@ internal class PixSpeechQueue(
         packageName = notification.packageName,
         amount = candidate.amount,
         payer = candidate.payer,
-        text = "Pix recebido de ${amountInWords(candidate.amount)} de ${candidate.payer}. ${THANK_YOU_PHRASES.random()}",
         signature = candidate.eventId,
         capturedAt = capturedAt,
         speechCompleted = false,
@@ -218,7 +227,6 @@ internal class PixSpeechQueue(
           packageName = packageName,
           amount = amount,
           payer = payer,
-          text = "Pix recebido de ${amountInWords(amount)} de $payer. ${THANK_YOU_PHRASES.random()}",
           signature = signature,
           capturedAt = postTime.takeIf { it > 0L } ?: System.currentTimeMillis(),
           speechCompleted = false,
@@ -405,7 +413,18 @@ internal class PixSpeechQueue(
 
     val dispatchLatencyMs = (System.currentTimeMillis() - item.capturedAt).coerceAtLeast(0L)
     Log.i(TAG, "Enviando confirmação ao TTS; captura até envio: ${dispatchLatencyMs}ms.")
-    val result = engine.speak(item.text, TextToSpeech.QUEUE_FLUSH, Bundle(), item.id)
+    val settings = PixFalaPreferences.getSpeechSettings(context)
+    val speechRateResult = engine.setSpeechRate(settings.rate)
+    if (speechRateResult == TextToSpeech.ERROR) {
+      Log.w(TAG, "O mecanismo TTS recusou a velocidade configurada; será usada a velocidade normal.")
+      engine.setSpeechRate(1f)
+    }
+    val result = engine.speak(
+      buildSpeechText(item, settings),
+      TextToSpeech.QUEUE_FLUSH,
+      Bundle(),
+      item.id
+    )
     if (result == TextToSpeech.ERROR) {
       Log.e(TAG, "O Android recusou a fala; o Pix continuará na fila.")
       retrySpeech(item)
@@ -480,7 +499,6 @@ internal class PixSpeechQueue(
             packageName = item.getString("packageName"),
             amount = item.getString("amount"),
             payer = item.getString("payer"),
-            text = item.getString("text"),
             signature = item.getString("signature"),
             capturedAt = item.getLong("capturedAt"),
             speechCompleted = item.optBoolean("speechCompleted", false),
@@ -511,7 +529,6 @@ internal class PixSpeechQueue(
           .put("packageName", item.packageName)
           .put("amount", item.amount)
           .put("payer", item.payer)
-          .put("text", item.text)
           .put("signature", item.signature)
           .put("capturedAt", item.capturedAt)
           .put("speechCompleted", item.speechCompleted)
@@ -776,13 +793,6 @@ internal class PixSpeechQueue(
       "", "cento", "duzentos", "trezentos", "quatrocentos", "quinhentos",
       "seiscentos", "setecentos", "oitocentos", "novecentos"
     )
-    private val THANK_YOU_PHRASES = listOf(
-      "Muito obrigado.",
-      "Obrigado!",
-      "Um ótimo dia!",
-      "Volte sempre!",
-      "Até logo!"
-    )
     private val DIACRITICS_PATTERN = "\\p{Mn}+".toRegex()
     private val WHITESPACE_PATTERN = "\\s+".toRegex()
     private val NON_BREAKING_SPACES_PATTERN = "[\\u00A0\\u2007\\u202F]".toRegex()
@@ -825,12 +835,64 @@ internal class PixSpeechQueue(
 }
 
 internal object PixFalaPreferences {
+  private const val TAG = "PixFalaPreferences"
   private const val PREFERENCES_NAME = "pixfala_native_monitoring"
   private const val KEY_MONITORING_ENABLED = "monitoring_enabled"
+  private const val KEY_SPEECH_TEMPLATE = "speech_template"
+  private const val KEY_SPEECH_RATE = "speech_rate"
+  private const val KEY_SPEECH_NAME_COUNT = "speech_name_count"
+  private const val KEY_SPEECH_NAME_PARTS_VERSION = "speech_name_parts_version"
+  private const val DEFAULT_SPEECH_TEMPLATE =
+    "Pix recebido de {valor} de {nome} {sobrenome}. Muito obrigado!"
+  private const val MAX_SPEECH_TEMPLATE_LENGTH = 180
 
   fun isMonitoringEnabled(context: Context): Boolean =
     context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
       .getBoolean(KEY_MONITORING_ENABLED, true)
+
+  fun getSpeechSettings(context: Context): PixSpeechSettings {
+    val preferences = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+    val storedTemplate = preferences.getString(KEY_SPEECH_TEMPLATE, DEFAULT_SPEECH_TEMPLATE)
+      ?: DEFAULT_SPEECH_TEMPLATE
+    val rate = preferences.getFloat(KEY_SPEECH_RATE, 1f)
+    val nameCount = preferences.getInt(KEY_SPEECH_NAME_COUNT, 2)
+    val shouldMigrateLegacyName = preferences.getInt(KEY_SPEECH_NAME_PARTS_VERSION, 1) < 2 &&
+      nameCount == 2 && storedTemplate.contains("{nome}", ignoreCase = true) &&
+      !storedTemplate.contains("{sobrenome}", ignoreCase = true)
+    val candidateTemplate = if (shouldMigrateLegacyName) {
+      storedTemplate.replace("{nome}", "{nome} {sobrenome}", ignoreCase = true)
+    } else {
+      storedTemplate
+    }
+    val template = candidateTemplate.takeIf { it.length <= MAX_SPEECH_TEMPLATE_LENGTH } ?: storedTemplate
+    if (template.isBlank() || template.length > MAX_SPEECH_TEMPLATE_LENGTH ||
+      rate !in setOf(1f, 1.5f, 2f)
+    ) {
+      throw IllegalStateException("As configurações de voz salvas são inválidas.")
+    }
+    return PixSpeechSettings(template, rate)
+  }
+
+  fun setSpeechSettings(context: Context, template: String, rate: Float): Boolean {
+    val normalizedTemplate = template.trim()
+    require(normalizedTemplate.isNotEmpty() && normalizedTemplate.length <= MAX_SPEECH_TEMPLATE_LENGTH) {
+      "A frase precisa ter entre 1 e $MAX_SPEECH_TEMPLATE_LENGTH caracteres."
+    }
+    require(rate in setOf(1f, 1.5f, 2f)) {
+      "Selecione uma velocidade de fala disponível."
+    }
+    val saved = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+      .edit()
+      .putString(KEY_SPEECH_TEMPLATE, normalizedTemplate)
+      .putFloat(KEY_SPEECH_RATE, rate)
+      .putInt(KEY_SPEECH_NAME_PARTS_VERSION, 2)
+      .remove(KEY_SPEECH_NAME_COUNT)
+      .commit()
+    if (!saved) {
+      Log.e(TAG, "O Android não confirmou a gravação das configurações de voz.")
+    }
+    return saved
+  }
 
   fun setMonitoringEnabled(context: Context, enabled: Boolean): Boolean =
     context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)

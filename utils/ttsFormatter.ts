@@ -36,14 +36,6 @@ const hundreds = [
   'novecentos',
 ];
 
-const THANK_YOU_PHRASES = [
-  'Muito obrigado.',
-  'Obrigado!',
-  'Um ótimo dia!',
-  'Volte sempre!',
-  'Até logo!',
-];
-
 function numberUnderThousand(value: number): string {
   if (value < 10) return smallNumbers[value];
   if (value < 20) return teens[value - 10];
@@ -89,8 +81,13 @@ function numberInWords(value: number): string {
 }
 
 export function formatarNomeParaVoz(nome?: string): string | null {
-  const nomes = nome?.trim().split(/\s+/u).filter(Boolean).slice(0, 2);
-  return nomes?.length ? nomes.join(' ') : null;
+  const primeiroNome = nome?.trim().split(/\s+/u).filter(Boolean)[0];
+  return primeiroNome ?? null;
+}
+
+export function formatarSobrenomeParaVoz(nome?: string): string | null {
+  const sobrenome = nome?.trim().split(/\s+/u).filter(Boolean)[1];
+  return sobrenome ?? null;
 }
 
 export function formatarValorPorExtenso(valorFormatado: string): string {
@@ -109,9 +106,4 @@ export function formatarValorPorExtenso(valorFormatado: string): string {
   }
 
   return spokenParts.join(' e ');
-}
-
-export function escolherFraseDeAgradecimento(): string {
-  const phraseIndex = Math.floor(Math.random() * THANK_YOU_PHRASES.length);
-  return THANK_YOU_PHRASES[phraseIndex];
 }

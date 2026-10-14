@@ -1,4 +1,4 @@
-import { Check, Volume2 } from 'lucide-react-native';
+import { Check } from 'lucide-react-native';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { theme } from '@/constants/theme';
@@ -11,21 +11,19 @@ type StatusToggleProps = {
 export function StatusToggle({ active, onToggle }: StatusToggleProps) {
   return (
     <View style={[styles.card, active && styles.cardActive]}>
-      <View style={styles.heading}>
-        <Text style={styles.eyebrow}>STATUS</Text>
-        <View style={[styles.statusBadge, active ? styles.statusBadgeActive : styles.statusBadgeInactive]}>
-          <View style={[styles.statusDot, active ? styles.statusDotActive : styles.statusDotInactive]} />
-          <Text style={[styles.statusText, active ? styles.statusTextActive : styles.statusTextInactive]}>
-            {active ? 'ATIVO' : 'PAUSADO'}
-          </Text>
-        </View>
-      </View>
-
       <View style={styles.controlRow}>
         <View style={styles.statusCopy}>
-          <Text style={styles.title}>{active ? 'PixFala ligado' : 'PixFala pausado'}</Text>
+          <View style={styles.titleRow}>
+            <Text style={styles.title}>{active ? 'PixFala ligado' : 'PixFala pausado'}</Text>
+            <View style={[styles.statusBadge, active ? styles.statusBadgeActive : styles.statusBadgeInactive]}>
+              <View style={[styles.statusDot, active ? styles.statusDotActive : styles.statusDotInactive]} />
+              <Text style={[styles.statusText, active ? styles.statusTextActive : styles.statusTextInactive]}>
+                {active ? 'ATIVO' : 'PAUSADO'}
+              </Text>
+            </View>
+          </View>
           <Text style={styles.caption}>
-            {active ? 'Seus pagamentos serão anunciados' : 'Ative para ouvir seus Pix'}
+            {active ? 'Anuncia cada novo Pix recebido' : 'Ative para ouvir seus Pix'}
           </Text>
         </View>
         <Pressable
@@ -40,17 +38,9 @@ export function StatusToggle({ active, onToggle }: StatusToggleProps) {
             pressed && styles.pressed,
           ]}>
           <View style={[styles.switchThumb, active ? styles.switchThumbActive : styles.switchThumbInactive]}>
-            {active && <Check color={theme.colors.black} size={18} strokeWidth={3} />}
+            {active && <Check color={theme.colors.black} size={15} strokeWidth={3} />}
           </View>
         </Pressable>
-      </View>
-
-      <View style={styles.divider} />
-      <View style={styles.footer}>
-        <Volume2 color={active ? theme.colors.neon : theme.colors.muted} size={16} />
-        <Text style={styles.footerText}>
-          {active ? 'Pronto para anunciar cada novo Pix' : 'Você pode ativar novamente quando quiser'}
-        </Text>
       </View>
     </View>
   );
@@ -58,7 +48,7 @@ export function StatusToggle({ active, onToggle }: StatusToggleProps) {
 
 const styles = StyleSheet.create({
   card: {
-    padding: 20,
+    padding: 14,
     borderRadius: theme.radius.card,
     backgroundColor: theme.colors.surface,
     borderWidth: 1,
@@ -67,23 +57,13 @@ const styles = StyleSheet.create({
   cardActive: {
     borderColor: '#14552F',
   },
-  heading: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  eyebrow: {
-    color: theme.colors.secondary,
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1.8,
-  },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
     borderRadius: theme.radius.pill,
   },
   statusBadgeActive: {
@@ -104,7 +84,7 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.muted,
   },
   statusText: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '800',
     letterSpacing: 1,
   },
@@ -118,29 +98,28 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: 24,
-    gap: 14,
+    gap: 10,
   },
   statusCopy: {
     flex: 1,
   },
   title: {
     color: theme.colors.text,
-    fontSize: 20,
+    fontSize: 16,
     fontWeight: '700',
-    letterSpacing: -0.5,
+    letterSpacing: -0.3,
   },
   caption: {
     color: theme.colors.secondary,
-    fontSize: 12,
-    lineHeight: 18,
-    marginTop: 6,
+    fontSize: 11,
+    lineHeight: 15,
+    marginTop: 3,
   },
   switchTrack: {
-    width: 68,
-    height: 38,
+    width: 56,
+    height: 32,
     borderRadius: theme.radius.pill,
-    padding: 4,
+    padding: 3,
     justifyContent: 'center',
   },
   switchTrackActive: {
@@ -157,9 +136,9 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
   switchThumb: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -174,21 +153,5 @@ const styles = StyleSheet.create({
   pressed: {
     opacity: 0.82,
     transform: [{ scale: 0.97 }],
-  },
-  divider: {
-    height: 1,
-    backgroundColor: theme.colors.border,
-    marginTop: 20,
-    marginBottom: 14,
-  },
-  footer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  footerText: {
-    color: theme.colors.secondary,
-    fontSize: 11,
-    flexShrink: 1,
   },
 });
