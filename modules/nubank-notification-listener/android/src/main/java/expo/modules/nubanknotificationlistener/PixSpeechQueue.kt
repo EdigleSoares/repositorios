@@ -46,7 +46,7 @@ private data class PixReceiptCandidate(
 
 internal class PixSpeechQueue(
   private val context: Context,
-  private val onDurablyQueued: (String, String) -> Unit
+  private val onDurablyQueued: (String, String, Long) -> Unit
 ) : TextToSpeech.OnInitListener {
   private val handler = Handler(Looper.getMainLooper())
   private val debugAudioFeedbackEnabled =
@@ -181,7 +181,7 @@ internal class PixSpeechQueue(
       return emptyList()
     }
 
-    notifyDurablyQueued(notification.key, notification.packageName)
+    notifyDurablyQueued(notification.key, notification.packageName, postTime)
     if (newItems.isNotEmpty()) {
       playConfirmationTone()
       processPending()
@@ -211,7 +211,11 @@ internal class PixSpeechQueue(
     amountText: String,
     payerText: String
   ): Boolean {
-    if (eventId.isBlank() || notificationKey.isBlank()) return false
+    if (
+      eventId.isBlank() ||
+      notificationKey.isBlank() ||
+      !isSupportedBankPackage(packageName)
+    ) return false
     val amount = normalizeAmount(amountText) ?: return false
     val payer = payerText.trim().replace(WHITESPACE_PATTERN, " ")
       .split(' ')
@@ -253,7 +257,7 @@ internal class PixSpeechQueue(
     if (newlyQueued) {
       Log.i(TAG, "Pix confirmado na fila nativa de fala.")
       playConfirmationTone()
-      notifyDurablyQueued(notificationKey, packageName)
+      notifyDurablyQueued(notificationKey, packageName, postTime)
       processPending()
     }
     return true
@@ -565,9 +569,9 @@ internal class PixSpeechQueue(
     }
   }
 
-  private fun notifyDurablyQueued(notificationKey: String, packageName: String) {
+  private fun notifyDurablyQueued(notificationKey: String, packageName: String, postTime: Long) {
     try {
-      onDurablyQueued(notificationKey, packageName)
+      onDurablyQueued(notificationKey, packageName, postTime)
     } catch (error: RuntimeException) {
       Log.e(TAG, "Pix salvo na fila, mas não foi possível limpar a notificação do banco.", error)
     }
@@ -804,7 +808,7 @@ internal class PixSpeechQueue(
     private val WHITESPACE_PATTERN = "\\s+".toRegex()
     private val NON_BREAKING_SPACES_PATTERN = "[\\u00A0\\u2007\\u202F]".toRegex()
     private val OUTGOING_PATTERN =
-      Regex("""\b(enviado|enviada|enviou|realizada|efetuado|agendado|comprovante|fatura|compra|cartao|saque|investimento)\w*\b""")
+      Regex("""\b(pix\s+(enviado|enviada|efetuado|efetuada|realizado|realizada|feito|feita)|transferencia\s+(pix\s+)?(enviada|realizada)|enviado|enviada|enviou|enviei|realizado|realizada|realizou|efetuado|efetuada|efetuou|agendado|agendada|agendou|comprovante|fatura|compra|comprou|cartao|saque|investimento|paga\w*|pagou|pagamento\s+(realizado|efetuado)|debito|saida)\w*\b""")
     private val INCOMING_PATTERN =
       Regex("""\b(pix\s+recebido|recebeu|recebido|recebida|recebemos|credito\s+recebido|transferencia\s+(pix\s+)?recebida|voce\s+recebeu)\b""")
     private val EXPLICIT_PIX_PATTERN = Regex("""\bpix\b""")
@@ -822,6 +826,7 @@ internal class PixSpeechQueue(
       "com.bmg.banco.mobile" to "BMG",
       "br.com.bancobmg.bancodigital" to "BMG",
       "com.neon" to "Neon",
+      "br.com.neon" to "Neon",
       "com.c6bank.app" to "C6 Bank",
       "br.com.bb.android" to "Banco do Brasil",
       "com.bradesco" to "Bradesco",
@@ -838,6 +843,9 @@ internal class PixSpeechQueue(
       "br.com.stone.ton" to "Ton",
       "co.stone.pos.android" to "Stone"
     )
+
+    fun isSupportedBankPackage(packageName: String): Boolean =
+      packageName in BANK_NAMES
   }
 }
 

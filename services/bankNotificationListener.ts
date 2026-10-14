@@ -19,6 +19,7 @@ const BANK_PACKAGE_NAMES: Record<string, string> = {
   'com.bmg.banco.mobile': 'BMG',
   'br.com.bancobmg.bancodigital': 'BMG',
   'com.neon': 'Neon',
+  'br.com.neon': 'Neon',
   'com.c6bank.app': 'C6 Bank',
   'br.com.bb.android': 'Banco do Brasil',
   'com.bradesco': 'Bradesco',
@@ -36,7 +37,7 @@ const BANK_PACKAGE_NAMES: Record<string, string> = {
   'co.stone.pos.android': 'Stone',
 };
 const OUTGOING_PATTERN =
-  /\b(?:enviado|enviada|enviou|realizada|efetuado|agendado|comprovante|fatura|compra|cartao|saque|investimento)\w*\b/iu;
+  /\b(?:pix\s+(?:enviado|enviada|efetuado|efetuada|realizado|realizada|feito|feita)|transferencia\s+(?:pix\s+)?(?:enviada|realizada)|enviado|enviada|enviou|enviei|realizado|realizada|realizou|efetuado|efetuada|efetuou|agendado|agendada|agendou|comprovante|fatura|compra|comprou|cartao|saque|investimento|paga\w*|pagou|pagamento\s+(?:realizado|efetuado)|debito|saida)\w*\b/iu;
 const INCOMING_PATTERN =
   /\b(?:pix\s+recebido|recebeu|recebido|recebida|recebemos|credito\s+recebido|transferencia\s+(?:pix\s+)?recebida|voce\s+recebeu)\b/iu;
 const EXPLICIT_PIX_PATTERN = /\bpix\b/iu;
@@ -445,7 +446,11 @@ export async function subscribeToBankPix(
           });
           if (reportStored && bankName && notification.key) {
             try {
-              nativeListener.cancelNotification(notification.key);
+              nativeListener.cancelNotification(
+                notification.key,
+                notification.packageName,
+                notification.postTime,
+              );
               console.log('[PixFala][listener] Notificação removida após fala concluída sem fila nativa', {
                 ...notificationDetails,
                 bankName,

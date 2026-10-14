@@ -9,13 +9,13 @@ class NubankNotificationListenerService : NotificationListenerService() {
 
   override fun onCreate() {
     super.onCreate()
-    speechQueue = PixSpeechQueue(this) { key, packageName ->
-      if (packageName in BANK_PACKAGES) {
+    speechQueue = PixSpeechQueue(this) { key, packageName, postTime ->
+      if (PixSpeechQueue.isSupportedBankPackage(packageName)) {
         try {
-          cancelNotification(key)
-          android.util.Log.i(TAG, "Notificação bancária removida após persistir a fala: $packageName")
+          cancelCapturedNotification(key, packageName, postTime)
+          android.util.Log.i(TAG, "Notificação de Pix recebido removida após persistir a fila: $packageName")
         } catch (error: RuntimeException) {
-          android.util.Log.e(TAG, "Não foi possível remover a notificação bancária após persistir a fala.", error)
+          android.util.Log.e(TAG, "Não foi possível remover a notificação de Pix recebido.", error)
         }
       }
     }
@@ -79,33 +79,22 @@ class NubankNotificationListenerService : NotificationListenerService() {
 
   companion object {
     private const val TAG = "PixFalaNotification"
-    private val BANK_PACKAGES = setOf(
-      "com.nu.production",
-      "com.bmg.banco.mobile",
-      "br.com.bancobmg.bancodigital",
-      "com.neon",
-      "com.c6bank.app",
-      "br.com.bb.android",
-      "com.bradesco",
-      "br.com.bradesco.next",
-      "com.itau",
-      "com.itau.personnalite",
-      "com.santander.app",
-      "com.mercadopago.wallet",
-      "br.gov.caixa.tem",
-      "br.com.gft.caixa",
-      "br.com.intermedium",
-      "br.com.uol.ps",
-      "com.picpay",
-      "br.com.stone.ton",
-      "co.stone.pos.android"
-    )
     @Volatile
     private var activeListener: NubankNotificationListenerService? = null
 
-    fun cancelCapturedNotification(key: String) {
+    fun cancelCapturedNotification(key: String, packageName: String, postTime: Long) {
+      require(key.isNotBlank()) { "A chave da notificação não pode estar vazia." }
+      require(PixSpeechQueue.isSupportedBankPackage(packageName)) {
+        "O pacote da notificação não pertence a um banco Pix compatível."
+      }
       val listener = activeListener
         ?: throw IllegalStateException("O serviço de leitura de notificações não está conectado.")
+      val activeNotification = listener.activeNotifications
+        ?.firstOrNull { it.key == key }
+        ?: throw IllegalStateException("A notificação já não está ativa; ela não foi removida.")
+      require(activeNotification.packageName == packageName && activeNotification.postTime == postTime) {
+        "A notificação mudou desde a captura; ela não foi removida."
+      }
       listener.cancelNotification(key)
     }
 
@@ -116,14 +105,17 @@ class NubankNotificationListenerService : NotificationListenerService() {
       packageName: String,
       amount: String,
       payer: String
-    ): Boolean = activeListener?.speechQueue?.ensurePixSpeechQueued(
-      eventId,
-      key,
-      postTime,
-      packageName,
-      amount,
-      payer
-    ) ?: false
+    ): Boolean {
+      if (!PixSpeechQueue.isSupportedBankPackage(packageName)) return false
+      return activeListener?.speechQueue?.ensurePixSpeechQueued(
+        eventId,
+        key,
+        postTime,
+        packageName,
+        amount,
+        payer
+      ) ?: false
+    }
 
     fun getPendingPixReports(): List<Map<String, Any>> =
       activeListener?.speechQueue?.getPendingPixReports() ?: emptyList()

@@ -28,11 +28,8 @@ class NubankNotificationListenerModule : Module() {
 
     Events("onNotificationReceived")
 
-    Function("cancelNotification") { key: String ->
-      if (key.isBlank()) {
-        throw IllegalArgumentException("A chave da notificação não pode estar vazia.")
-      }
-      NubankNotificationListenerService.cancelCapturedNotification(key)
+    Function("cancelNotification") { key: String, packageName: String, postTime: Double ->
+      NubankNotificationListenerService.cancelCapturedNotification(key, packageName, postTime.toLong())
       Unit
     }
 

@@ -34,7 +34,7 @@ export type PixSpeechSettings = {
 };
 
 export declare class NubankNotificationListenerModule extends NativeModule<BankNotificationListenerEvents> {
-  cancelNotification(key: string): void;
+  cancelNotification(key: string, packageName: string, postTime: number): void;
   ensurePixSpeechQueued(
     eventId: string,
     key: string,

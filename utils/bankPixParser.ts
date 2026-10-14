@@ -21,6 +21,7 @@ const BANK_NAMES: Record<string, string> = {
   'com.picpay': 'PicPay',
   'com.santander.app': 'Santander',
   'com.neon': 'Neon',
+  'br.com.neon': 'Neon',
   'br.com.stone.ton': 'Ton / Stone',
   'co.stone.pos.android': 'Ton / Stone',
 };
@@ -30,7 +31,7 @@ export function getBankName(packageName: string): string {
 }
 
 const OUTGOING_PATTERN =
-  /\b(?:enviado|enviada|enviou|paga\w*|realizada\s+com\s+sucesso|comprovante|compra(?:s)?|comprou|enviei|transferência\s+enviada|transferencia\s+enviada|pix\s+realizado|transferência\s+realizada|transferencia\s+realizada|pagou|débito|debito|saída|saida|agendad[oa])\b/iu;
+  /\b(?:pix\s+(?:enviado|enviada|efetuado|efetuada|realizado|realizada|feito|feita)|transfer[eê]ncia\s+(?:pix\s+)?(?:enviada|realizada)|enviado|enviada|enviou|enviei|paga\w*|realizado\s+com\s+sucesso|realizado|realizada|realizou|efetuado|efetuada|efetuou|comprovante|fatura|compra(?:s)?|comprou|pagou|pagamento\s+(?:realizado|efetuado)|débito|debito|saída|saida|investimento|agendad[oa])\b/iu;
 const INCOMING_PATTERN =
   /\b(?:recebemos|recebeu|recebida|recebido|recebimento|crédito|credito|creditado|creditada|entrada|caiu\s+(?:na|em)\s+sua\s+conta|pix\s+recebido|transferência\s+(?:pix\s+)?recebida|transferencia\s+(?:pix\s+)?recebida)\b/iu;
 const EXPLICIT_PIX_PATTERN = /\bpix\b/iu;

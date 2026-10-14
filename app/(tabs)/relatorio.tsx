@@ -4,14 +4,29 @@ import {
   AppState,
   Alert,
   FlatList,
+  Platform,
   Pressable,
+  Share,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowDownLeft, Clock3, RefreshCw, Search, Trash2, X } from 'lucide-react-native';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
+import {
+  ArrowDownLeft,
+  ChevronLeft,
+  ChevronRight,
+  Clock3,
+  FileDown,
+  RefreshCw,
+  Search,
+  Share2,
+  Trash2,
+  X,
+} from 'lucide-react-native';
 
 import { theme } from '@/constants/theme';
 import {
@@ -20,6 +35,7 @@ import {
   subscribeToPixRecords,
   type PixRecord,
 } from '@/services/pixStorage';
+import { getBankName } from '@/utils/bankPixParser';
 import { formatarValorMonetario } from '@/utils/pixFormatter';
 
 type ReportPeriod = 'today' | 'week' | 'month';
@@ -36,12 +52,22 @@ const PERIOD_LABELS: Record<ReportPeriod, { total: string; list: string; caption
   month: { total: 'TOTAL DO MÊS', list: 'Pix deste mês', caption: 'neste mês' },
 };
 
-function getPeriodRange(period: ReportPeriod, now = new Date()): { start: Date; end: Date } {
+function getPeriodRange(
+  period: ReportPeriod,
+  now = new Date(),
+  offset = 0,
+): { start: Date; end: Date } {
   const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   if (period === 'week') {
     start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
   } else if (period === 'month') {
     start.setDate(1);
+  }
+
+  if (period === 'month') {
+    start.setMonth(start.getMonth() + offset);
+  } else {
+    start.setDate(start.getDate() + offset * (period === 'week' ? 7 : 1));
   }
 
   const end = new Date(start);
@@ -72,6 +98,12 @@ function formatRecordValue(value: string): string {
   return cents > 0 ? formatCurrency(cents) : value;
 }
 
+function getRecordBankName(record: PixRecord): string {
+  if (!record.packageName || record.banco !== record.packageName) return record.banco;
+  const bankName = getBankName(record.packageName);
+  return bankName === 'Banco não identificado' ? record.banco : bankName;
+}
+
 function formatTime(timestamp: string): string {
   const date = new Date(timestamp);
   if (!Number.isFinite(date.getTime())) return '--:--';
@@ -83,8 +115,9 @@ function filterPeriod(
   records: PixRecord[],
   period: ReportPeriod,
   now = new Date(),
+  offset = 0,
 ): PixRecord[] {
-  const { start, end } = getPeriodRange(period, now);
+  const { start, end } = getPeriodRange(period, now, offset);
   return records
     .filter((record) => {
       const timestamp = Date.parse(record.timestamp);
@@ -116,11 +149,139 @@ function matchesSearch(record: PixRecord, query: string): boolean {
   return storedValueDigits.includes(queryDigits) || formattedValueDigits.includes(queryDigits);
 }
 
-function formatWeekRange(now: Date): string {
-  const { start, end } = getPeriodRange('week', now);
+function formatDate(date: Date): string {
+  return date.toLocaleDateString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+}
+
+function getPeriodRangeLabel(period: ReportPeriod, now: Date, offset: number): string {
+  const { start, end } = getPeriodRange(period, now, offset);
+  if (period === 'month') {
+    return start.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+  }
+
   end.setDate(end.getDate() - 1);
-  const format = (date: Date) => date.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
-  return `${format(start)} – ${format(end)}`;
+  if (period === 'today') return formatDate(start);
+  return `${formatDate(start)} – ${formatDate(end)}`;
+}
+
+function getPeriodLabels(
+  period: ReportPeriod,
+  now: Date,
+  offset: number,
+): { total: string; list: string; caption: string } {
+  if (period === 'today') {
+    if (offset === 0) return PERIOD_LABELS.today;
+    const { start } = getPeriodRange(period, now, offset);
+    return {
+      total: 'TOTAL DO DIA',
+      list: 'Pix do dia',
+      caption: `em ${formatDate(start)}`,
+    };
+  }
+  if (period === 'week' && offset !== 0) {
+    return { ...PERIOD_LABELS.week, caption: 'na semana selecionada' };
+  }
+  if (period === 'month' && offset !== 0) {
+    return { ...PERIOD_LABELS.month, caption: 'no mês selecionado' };
+  }
+  return PERIOD_LABELS[period];
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/gu, '&amp;')
+    .replace(/</gu, '&lt;')
+    .replace(/>/gu, '&gt;')
+    .replace(/"/gu, '&quot;')
+    .replace(/'/gu, '&#39;');
+}
+
+function createShareSummary(
+  periodLabel: string,
+  rangeLabel: string,
+  periodRecords: PixRecord[],
+  totalCents: number,
+): string {
+  const pixLabel = periodRecords.length === 1 ? 'Pix recebido' : 'Pix recebidos';
+  return [
+    `Resumo PixFala • ${periodLabel}`,
+    `Período: ${rangeLabel}`,
+    `${periodRecords.length} ${pixLabel}`,
+    `Total recebido: ${formatCurrency(totalCents)}`,
+  ].join('\n');
+}
+
+function createReportHtml(
+  periodLabel: string,
+  rangeLabel: string,
+  periodRecords: PixRecord[],
+  totalCents: number,
+): string {
+  const rows = periodRecords.map((record) => `
+    <tr>
+      <td>${escapeHtml(formatDate(new Date(record.timestamp)))} ${escapeHtml(formatTime(record.timestamp))}</td>
+      <td>${escapeHtml(record.nomePagador || 'Cliente')}</td>
+      <td>${escapeHtml(getRecordBankName(record))}</td>
+      <td class="amount">${escapeHtml(formatRecordValue(record.valor))}</td>
+    </tr>
+  `).join('');
+  const averageCents = periodRecords.length > 0
+    ? Math.round(totalCents / periodRecords.length)
+    : 0;
+
+  return `<!doctype html>
+  <html lang="pt-BR">
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>Relatório PixFala - ${escapeHtml(rangeLabel)}</title>
+      <style>
+        @page { margin: 18mm 14mm; }
+        * { box-sizing: border-box; }
+        body { margin: 0; color: #17211b; font: 12px Arial, sans-serif; }
+        header { border-bottom: 3px solid #00a844; padding-bottom: 14px; }
+        .brand { color: #008b3b; font-size: 12px; font-weight: 700; letter-spacing: 2px; }
+        h1 { margin: 10px 0 4px; font-size: 24px; }
+        .period { color: #58635b; font-size: 13px; text-transform: capitalize; }
+        .summary { display: flex; gap: 12px; margin: 18px 0; }
+        .metric { flex: 1; padding: 12px; border: 1px solid #d8e4db; border-radius: 8px; }
+        .metric-label { color: #647067; font-size: 9px; font-weight: 700; }
+        .metric-value { margin-top: 7px; color: #087b38; font-size: 18px; font-weight: 700; }
+        table { width: 100%; border-collapse: collapse; }
+        th { background: #eef5f0; color: #46534a; font-size: 9px; text-align: left; }
+        th, td { padding: 9px 7px; border-bottom: 1px solid #e1e8e3; }
+        td { font-size: 10px; }
+        .amount { color: #087b38; font-weight: 700; text-align: right; white-space: nowrap; }
+        th:last-child { text-align: right; }
+        .empty { margin: 22px 0; color: #647067; text-align: center; }
+        footer { margin-top: 18px; color: #7a847d; font-size: 9px; text-align: center; }
+        @media print { tr { page-break-inside: avoid; } }
+      </style>
+    </head>
+    <body>
+      <header>
+        <div class="brand">PIX FALA</div>
+        <h1>${escapeHtml(periodLabel)}</h1>
+        <div class="period">${escapeHtml(rangeLabel)}</div>
+      </header>
+      <section class="summary">
+        <div class="metric"><div class="metric-label">TOTAL RECEBIDO</div><div class="metric-value">${escapeHtml(formatCurrency(totalCents))}</div></div>
+        <div class="metric"><div class="metric-label">QUANTIDADE DE PIX</div><div class="metric-value">${periodRecords.length}</div></div>
+        <div class="metric"><div class="metric-label">TICKET MÉDIO</div><div class="metric-value">${escapeHtml(formatCurrency(averageCents))}</div></div>
+      </section>
+      ${periodRecords.length > 0 ? `
+        <table>
+          <thead><tr><th>Data e hora</th><th>Pagador</th><th>Banco</th><th>Valor</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      ` : '<p class="empty">Nenhum Pix registrado neste período.</p>'}
+      <footer>Gerado pelo PixFala em ${escapeHtml(new Date().toLocaleString('pt-BR'))}</footer>
+    </body>
+  </html>`;
 }
 
 function PixRow({ record, last }: { record: PixRecord; last: boolean }) {
@@ -131,7 +292,7 @@ function PixRow({ record, last }: { record: PixRecord; last: boolean }) {
       </View>
       <View style={styles.pixCopy}>
         <Text style={styles.payer} numberOfLines={1}>{record.nomePagador}</Text>
-        <Text style={styles.bank} numberOfLines={1}>{record.banco}</Text>
+        <Text style={styles.bank} numberOfLines={1}>{getRecordBankName(record)}</Text>
       </View>
       <View style={styles.pixAmountCopy}>
         <Text style={styles.amount}>{formatRecordValue(record.valor)}</Text>
@@ -149,12 +310,14 @@ export default function ReportScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
   const [period, setPeriod] = useState<ReportPeriod>('today');
+  const [periodOffset, setPeriodOffset] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [now, setNow] = useState(() => new Date());
+  const [exporting, setExporting] = useState(false);
 
   const periodRecords = useMemo(
-    () => filterPeriod(records, period, now),
-    [now, period, records],
+    () => filterPeriod(records, period, now, periodOffset),
+    [now, period, periodOffset, records],
   );
   const visibleRecords = useMemo(
     () => periodRecords.filter((record) => matchesSearch(record, searchQuery)),
@@ -165,6 +328,75 @@ export default function ReportScreen() {
     () => periodRecords.reduce((total, record) => total + amountInCents(record.valor), 0),
     [periodRecords],
   );
+  const periodRangeLabel = useMemo(
+    () => getPeriodRangeLabel(period, now, periodOffset),
+    [now, period, periodOffset],
+  );
+  const periodLabels = useMemo(
+    () => getPeriodLabels(period, now, periodOffset),
+    [now, period, periodOffset],
+  );
+
+  const handlePeriodChange = (nextPeriod: ReportPeriod) => {
+    setPeriod(nextPeriod);
+    setPeriodOffset(0);
+  };
+
+  const movePeriod = (direction: -1 | 1) => {
+    setPeriodOffset((offset) => Math.min(0, offset + direction));
+  };
+
+  const handleShareSummary = async () => {
+    if (periodRecords.length === 0) {
+      Alert.alert('Sem recebimentos', 'Não há Pix para compartilhar neste período.');
+      return;
+    }
+    try {
+      await Share.share({
+        title: `Resumo PixFala • ${periodRangeLabel}`,
+        message: createShareSummary(periodLabels.list, periodRangeLabel, periodRecords, totalCents),
+      });
+    } catch (shareError) {
+      Alert.alert(
+        'Não foi possível compartilhar',
+        shareError instanceof Error ? shareError.message : 'Tente novamente.',
+      );
+    }
+  };
+
+  const handleExportPdf = async () => {
+    if (exporting) return;
+    if (periodRecords.length === 0) {
+      Alert.alert('Sem recebimentos', 'Não há Pix para exportar neste período.');
+      return;
+    }
+
+    setExporting(true);
+    try {
+      const html = createReportHtml(periodLabels.list, periodRangeLabel, periodRecords, totalCents);
+      if (Platform.OS === 'web') {
+        await Print.printAsync({ html });
+        return;
+      }
+
+      const { uri } = await Print.printToFileAsync({ html });
+      if (!(await Sharing.isAvailableAsync())) {
+        throw new Error('O compartilhamento de arquivos não está disponível neste aparelho.');
+      }
+      await Sharing.shareAsync(uri, {
+        dialogTitle: 'Compartilhar relatório PixFala',
+        mimeType: 'application/pdf',
+        UTI: '.pdf',
+      });
+    } catch (exportError) {
+      Alert.alert(
+        'Não foi possível exportar o relatório',
+        exportError instanceof Error ? exportError.message : 'Tente novamente.',
+      );
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const refreshRecords = useCallback(async () => {
     setLoading(true);
@@ -272,7 +504,7 @@ export default function ReportScreen() {
                 <Text style={styles.eyebrow}>SEU NEGÓCIO EM NÚMEROS</Text>
                 <Text style={styles.title}>Relatório</Text>
               </View>
-              {period === 'today' && (
+              {period === 'today' && periodOffset === 0 && (
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Limpar histórico de hoje"
@@ -299,7 +531,7 @@ export default function ReportScreen() {
                     key={item.key}
                     accessibilityRole="button"
                     accessibilityState={{ selected }}
-                    onPress={() => setPeriod(item.key)}
+                    onPress={() => handlePeriodChange(item.key)}
                     style={({ pressed }) => [
                       styles.periodButton,
                       selected && styles.periodButtonSelected,
@@ -314,12 +546,66 @@ export default function ReportScreen() {
             </View>
 
             <View style={styles.totalCard}>
-              <Text style={styles.cardEyebrow}>{PERIOD_LABELS[period].total}</Text>
+              <Text style={styles.cardEyebrow}>{periodLabels.total}</Text>
               <Text style={styles.totalAmount}>{formatCurrency(totalCents)}</Text>
               <Text style={styles.totalCaption}>
-                {`${periodRecords.length} Pix ${periodRecords.length === 1 ? 'recebido' : 'recebidos'} ${PERIOD_LABELS[period].caption}`}
+                {`${periodRecords.length} Pix ${periodRecords.length === 1 ? 'recebido' : 'recebidos'} ${periodLabels.caption}`}
               </Text>
               <View style={styles.totalGlow} />
+            </View>
+
+            <View style={styles.periodNavigator}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Período anterior"
+                onPress={() => movePeriod(-1)}
+                style={({ pressed }) => [styles.periodArrow, pressed && styles.pressed]}>
+                <ChevronLeft color={theme.colors.text} size={20} />
+              </Pressable>
+              <Text style={styles.periodRange}>{periodRangeLabel}</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Próximo período"
+                disabled={periodOffset === 0}
+                onPress={() => movePeriod(1)}
+                style={({ pressed }) => [
+                  styles.periodArrow,
+                  periodOffset === 0 && styles.disabledPeriodArrow,
+                  pressed && periodOffset !== 0 && styles.pressed,
+                ]}>
+                <ChevronRight color={periodOffset === 0 ? theme.colors.muted : theme.colors.text} size={20} />
+              </Pressable>
+            </View>
+
+            <View style={styles.exportActions}>
+              <Pressable
+                accessibilityRole="button"
+                disabled={loading || exporting || periodRecords.length === 0}
+                onPress={() => void handleExportPdf()}
+                style={({ pressed }) => [
+                  styles.exportButton,
+                  styles.pdfButton,
+                  (loading || exporting || periodRecords.length === 0) && styles.disabledExportButton,
+                  pressed && !loading && !exporting && periodRecords.length > 0 && styles.pressed,
+                ]}>
+                {exporting
+                  ? <ActivityIndicator color={theme.colors.black} size="small" />
+                  : <FileDown color={theme.colors.black} size={17} />}
+                <Text style={styles.pdfButtonLabel}>{exporting ? 'Gerando...' : 'Exportar PDF'}</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                disabled={loading || periodRecords.length === 0}
+                onPress={() => void handleShareSummary()}
+                style={({ pressed }) => [
+                  styles.exportButton,
+                  styles.summaryButton,
+                  (loading || periodRecords.length === 0) && styles.disabledExportButton,
+                  pressed && !loading && periodRecords.length > 0 && styles.pressed,
+                ]}>
+                <Share2 color={theme.colors.neon} size={17} />
+                <Text style={styles.summaryButtonLabel}>Compartilhar resumo</Text>
+              </Pressable>
             </View>
 
             <View style={styles.searchBox}>
@@ -346,14 +632,8 @@ export default function ReportScreen() {
 
             <View style={styles.listHeading}>
               <View>
-                <Text style={styles.sectionTitle}>{PERIOD_LABELS[period].list}</Text>
-                <Text style={styles.sectionCaption}>
-                  {period === 'week'
-                    ? formatWeekRange(now)
-                    : period === 'month'
-                        ? now.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
-                      : 'Atualizado conforme os recebimentos chegam'}
-                </Text>
+                <Text style={styles.sectionTitle}>{periodLabels.list}</Text>
+                <Text style={styles.sectionCaption}>{periodRangeLabel}</Text>
               </View>
               {loading && <ActivityIndicator color={theme.colors.neon} size="small" />}
             </View>
@@ -450,6 +730,50 @@ const styles = StyleSheet.create({
     backgroundColor: '#1C3D29',
     opacity: 0.45,
   },
+  periodNavigator: {
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 10,
+    paddingHorizontal: 5,
+  },
+  periodArrow: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 13,
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  disabledPeriodArrow: { opacity: 0.45 },
+  periodRange: {
+    flex: 1,
+    color: theme.colors.text,
+    fontSize: 12,
+    fontWeight: '700',
+    textAlign: 'center',
+    textTransform: 'capitalize',
+  },
+  exportActions: { flexDirection: 'row', gap: 9, marginTop: 8 },
+  exportButton: {
+    flex: 1,
+    minHeight: 46,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    paddingHorizontal: 8,
+    borderRadius: 13,
+    borderWidth: 1,
+  },
+  pdfButton: { backgroundColor: theme.colors.neon, borderColor: theme.colors.neon },
+  summaryButton: { backgroundColor: theme.colors.surface, borderColor: '#275137' },
+  disabledExportButton: { opacity: 0.45 },
+  pdfButtonLabel: { color: theme.colors.black, fontSize: 10, fontWeight: '800' },
+  summaryButtonLabel: { color: theme.colors.neon, fontSize: 10, fontWeight: '800' },
   searchBox: {
     flexDirection: 'row',
     alignItems: 'center',

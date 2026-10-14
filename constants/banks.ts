@@ -33,7 +33,7 @@ export const banks: BankOption[] = [
   },
   { id: 'picpay', name: 'PicPay', monogram: 'pp', color: '#21C25E', packageNames: ['com.picpay'] },
   { id: 'santander', name: 'Santander', monogram: 's', color: '#EC0000', packageNames: ['com.santander.app'] },
-  { id: 'neon', name: 'Neon', monogram: 'n', color: '#00AEEF', packageNames: ['com.neon'] },
+  { id: 'neon', name: 'Neon', monogram: 'n', color: '#00AEEF', packageNames: ['com.neon', 'br.com.neon'] },
   { id: 'stone', name: 'Ton / Stone', monogram: 'ton', color: '#00A859', packageNames: ['br.com.stone.ton', 'co.stone.pos.android'] },
 ];
 

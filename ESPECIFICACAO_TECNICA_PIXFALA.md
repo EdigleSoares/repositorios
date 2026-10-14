@@ -33,6 +33,7 @@ Na aba Configurações, a mensagem de voz aceita os marcadores opcionais `{nome}
 - `app/(tabs)/index.tsx`: tela inicial com marca, monitoramento, cobrança QR Pix com atalhos de produtos, captura e licença.
 - `app/(tabs)/configuracoes.tsx`: chave Pix, personalização da fala e cadastro/edição/exclusão de produtos.
 - `app/(tabs)/relatorio.tsx`: relatório de recebimentos.
+- `app/(tabs)/relatorio.tsx`: também oferece navegação por dias, semanas e meses anteriores, compartilhamento de resumo textual e exportação detalhada em PDF.
 - `app/(tabs)/turbine.tsx`: tela de promoção/recursos para negócios.
 - `constants/theme.ts`: tokens do tema visual.
 - `components/StatusToggle.tsx`: controle visual de ativação.
@@ -47,6 +48,7 @@ Na aba Configurações, a mensagem de voz aceita os marcadores opcionais `{nome}
 - `services/bankNotificationListener.ts`: parser TypeScript, ligação do listener nativo com o relatório, escolha da rota de fala, overlay e tratamento de erros.
 - `services/ttsService.ts`: fila serializada de `expo-speech`, com callbacks de conclusão, interrupção e falha.
 - `services/pixStorage.ts`: persistência do histórico em AsyncStorage, serialização de gravações, notificadores de UI e retenção de 12 meses.
+- Relatórios exportados usam `expo-print` para montar/imprimir PDF e `expo-sharing` para abrir a folha nativa de compartilhamento; o resumo textual usa o compartilhamento do React Native.
 - `services/pixChargeService.ts`: validação de chave Pix, armazenamento seguro da configuração e montagem/validação do BR Code.
 - `utils/bankPixParser.ts`, `utils/pixFormatter.ts`, `utils/ttsFormatter.ts`: parsing e formatação compartilhados.
 
@@ -132,7 +134,7 @@ O contrato em `NubankNotificationListener.types.ts` expõe operações relevante
 
 - `ensurePixSpeechQueued(...)`: garante um item durável na fila nativa, usando os dados do parser JS quando necessário.
 - `getPendingPixReports()` / `markPixReportStored(eventId)`: sincroniza o relatório local a partir do diário nativo e confirma a gravação idempotente por evento Pix.
-- `cancelNotification(key)`: rota de cancelamento explícita usada pelo JS se a fila nativa não puder ser persistida e a fala Expo terminar.
+- `cancelNotification(key, packageName, postTime)`: rota de cancelamento explícita usada pelo JS se a fila nativa não puder ser persistida e a fala Expo terminar; pacote e horário são validados contra a notificação ainda ativa.
 
 `services/ttsService.ts` mantém sua própria fila sequencial em memória: `speechQueue`, `isSpeaking` e `processarFila()`. Ela protege chamadas do `expo-speech` contra sobreposição enquanto o processo JS está ativo; não é uma fila persistente e não substitui a fila Android.
 
@@ -161,19 +163,21 @@ Isso reduz, mas não elimina, falhas:
 
 ## 5. Cancelamento de notificações bancárias
 
-O cancelamento automático é executado pelo callback de `PixSpeechQueue` em `NubankNotificationListenerService`, depois da persistência da fila. Só ocorre quando o `packageName` pertence ao conjunto `BANK_PACKAGES`.
+O cancelamento automático é executado pelo callback de `PixSpeechQueue` em `NubankNotificationListenerService`, depois da persistência da fila. A fila só chama o callback após reconhecer um recebimento Pix e gravar o evento; texto de saída (como “Pix enviado”, “Pix efetuado” ou “Pix realizado”) é rejeitado. A rota de contingência JavaScript também exige que o parser reconheça um recebimento e que o Expo Speech termine antes de solicitar o cancelamento. A lista de pacotes canceláveis deriva do mapa de bancos reconhecidos pelo parser nativo; antes de remover, o serviço confere pacote e horário com a notificação ainda ativa, evitando atingir outra notificação que reutilize a mesma chave. Notificações de pacotes não mapeados e notificações não reconhecidas permanecem no sistema.
 
 Pacotes atualmente listados:
 
-`com.nu.production`, `com.bmg.banco.mobile`, `br.com.bancobmg.bancodigital`, `com.neon`, `com.c6bank.app`, `br.com.bb.android`, `com.bradesco`, `br.com.bradesco.next`, `com.itau`, `com.itau.personnalite`, `com.santander.app`, `com.mercadopago.wallet`, `br.gov.caixa.tem`, `br.com.gft.caixa`, `br.com.intermedium`, `br.com.uol.ps`, `com.picpay`, `br.com.stone.ton`, `co.stone.pos.android`.
+`com.nu.production`, `com.bmg.banco.mobile`, `br.com.bancobmg.bancodigital`, `com.neon`, `br.com.neon`, `com.c6bank.app`, `br.com.bb.android`, `com.bradesco`, `br.com.bradesco.next`, `com.itau`, `com.itau.personnalite`, `com.santander.app`, `com.mercadopago.wallet`, `br.gov.caixa.tem`, `br.com.gft.caixa`, `br.com.intermedium`, `br.com.uol.ps`, `com.picpay`, `br.com.stone.ton`, `co.stone.pos.android`.
 
-O parser nativo pode reconhecer texto vindo de outros pacotes, mas isso não os torna automaticamente canceláveis. Ao adicionar banco, conferir o identificador real do aplicativo instalado, sinais de recebimento versus envio, formatos de valor/pagador, parser JS, parser Kotlin e conjunto de cancelamento. Evitar cancelamento genérico de todos os apps.
+Somente os 20 identificadores listados acima são reconhecidos/canceláveis; o parser nativo não aceita pacotes fora desse mapa. Ao adicionar banco, conferir o identificador real do aplicativo instalado, sinais de recebimento versus envio, formatos de valor/pagador, parser JS, parser Kotlin e lista de cancelamento. Evitar cancelamento genérico de todos os apps.
 
 ## 6. Histórico, QR Pix e telas
 
 ### Histórico
 
 `services/pixStorage.ts` armazena `PixRecord` no AsyncStorage. Cada registro inclui ID, valor, pagador, banco e timestamp, com pacote e texto bruto opcionais. As operações de escrita são enfileiradas para evitar gravações concorrentes; leitura e gravação removem registros mais antigos que 12 meses. A tela de relatório tem filtros por período (dia/semana/mês) e pesquisa por pagador/valor, conforme a implementação da tela.
+
+O pacote `br.com.neon` é um identificador compatível do Neon, assim como `com.neon`; ambos são reconhecidos pela fila Android, pelo parser JS e pelo seletor/lista de bancos. Quando um registro antigo guardou o package name como nome do banco, a tela e o PDF traduzem para o nome amigável sem alterar o histórico persistido.
 
 `services/savedProductsService.ts` persiste produtos no AsyncStorage e valida os dados carregados. A seleção de produtos é temporária na tela de cobrança: cada unidade multiplica o preço salvo e o total preenche o mesmo campo de valor editável usado pelo QR.
 
